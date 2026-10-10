@@ -933,20 +933,24 @@ class ServiceTab(Gtk.Box):
             return
 
         def work():
-            errors = []
+            replies, errors = [], []
             for t in targets:
                 try:
-                    self.client.control(t["id"], op, t["kind"])
+                    replies.append(self.client.control(t["id"], op, t["kind"]))
                 except ApiError as e:
                     errors.append(f"{t['name'][:40]}: {e}")
-            return errors
+            return replies, errors
 
-        def done(errors, err):
+        def done(res, err):
             if err:
                 return
-            self.say(f"{op.replace('_', ' ').capitalize()}: {len(targets) - len(errors)} ok" + (" · " + "; ".join(errors) if errors else ""),
-                     error=bool(errors))
+            replies, errors = res
+            msg = f"{op.replace('_', ' ').capitalize()}: " + "; ".join(sorted(set(replies)) or ["no reply"])
+            if errors:
+                msg += " · " + "; ".join(errors)
+            self.say(msg, error=bool(errors))
             self.app.refresh()
+            GLib.timeout_add_seconds(5, lambda: self.app.refresh() and False)
         self._run(work, done)
 
     def on_delete(self, _btn):

@@ -182,7 +182,8 @@ class Torbox(_Client):
     BASE = "https://api.torbox.app/v1/api"
     name = "Torbox"
     PLANS = {0: "Free", 1: "Essential", 2: "Pro", 3: "Standard"}
-    def _json(self, method, path, **kw):
+    def _call(self, method, path, **kw):
+        """Full Torbox envelope after success checks."""
         body = _body(self._req(method, path, **kw), self.name)
         if not isinstance(body, dict):
             raise ApiError(f"Unexpected response from {self.name}")
@@ -190,7 +191,10 @@ class Torbox(_Client):
             if body.get("error") in TORBOX_AUTH_ERRORS:
                 raise ApiError(INVALID_KEY)
             raise ApiError(body.get("detail") or body.get("error") or "Torbox error")
-        return body.get("data")
+        return body
+
+    def _json(self, method, path, **kw):
+        return self._call(method, path, **kw).get("data")
 
     def account(self):
         u = self._json("GET", "/user/me") or {}
@@ -233,11 +237,12 @@ class Torbox(_Client):
             self._json("POST", "/torrents/createtorrent", files={"file": (os.path.basename(path), f, "application/x-bittorrent")})
 
     def control(self, tid, op, kind="torrent"):
-        """op: resume, stop_seeding, reannounce or delete (Torbox has no pause)."""
+        """op: resume, stop_seeding, reannounce or delete (Torbox has no pause). Returns Torbox's reply text."""
         if kind == "webdl":
-            self._json("POST", "/webdl/controlwebdownload", json={"webdl_id": int(tid), "operation": op})
+            body = self._call("POST", "/webdl/controlwebdownload", json={"webdl_id": int(tid), "operation": op})
         else:
-            self._json("POST", "/torrents/controltorrent", json={"torrent_id": int(tid), "operation": op})
+            body = self._call("POST", "/torrents/controltorrent", json={"torrent_id": int(tid), "operation": op})
+        return str(body.get("detail") or "ok")
 
     def delete(self, tid, kind="torrent"):
         self.control(tid, "delete", kind)

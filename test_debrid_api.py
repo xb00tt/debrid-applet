@@ -281,9 +281,10 @@ def test_tb_delete_routes_on_kind():
 
 
 def test_tb_control_ops():
-    s = FakeSession(ok(None), ok(None), ok(None))
+    s = FakeSession(FakeResp(200, {"success": True, "error": None, "detail": "Torrent will stop seeding.", "data": None}),
+                    ok(None), ok(None))
     tb = Torbox("t", s)
-    tb.control("7", "stop_seeding")
+    assert tb.control("7", "stop_seeding") == "Torrent will stop seeding."
     tb.control("7", "reannounce", "torrent")
     tb.control("3", "resume", "webdl")
     assert s.calls[0][:2] == ("POST", TB + "/torrents/controltorrent")
