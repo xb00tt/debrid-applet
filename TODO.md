@@ -11,7 +11,6 @@ Remaining ideas from the power-user list, none started:
 - **Stremio / Kodi / Jellyfin hand-off** for Play.
 - **CLI flags** (`--add <magnet>`, `--toggle`) via `Gio.Application` command-line handling, so a Cinnamon hotkey can drive it; the local API already covers the shell use case.
 - **Send to another service**: copy an item's magnet from one tab and add it to another in one click.
-- **Totals row**: summed down/up speed in the status line and tray tooltip.
 - **Merged view** across services with one search box.
 - **Export / import** of magnets (hash + name) per service.
 - **mpv resume position** (`--save-position-on-quit`) and **season-pack playlists** (all episodes queued).

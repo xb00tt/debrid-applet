@@ -117,7 +117,11 @@ The first four toggles are on by default.
 
 - Polls every 8 s while something is downloading, every 60 s when idle. Hover the tray icon to see the current interval.
 - Whole lists are fetched every poll (Real-Debrid paged 5000 at a time); rows update in place, so lists with 10k+ items stay usable.
-- Red text in the status line is the service's own error message; hover the status line for the last few, or open the activity log for everything.
+- The footer has two rows: the last action or error (red is the service's own message; hover for the last few,
+  or open the activity log), a spinner while anything is in flight, and "updated … · every N s"; below that a
+  colored plan badge (green paid, amber trial, red free), expiry with a countdown, points or downloads, live totals
+  (down/up speed, active, items, total size, "showing N" under a filter, "K ticked") and a button to the service's
+  web dashboard.
 - Window size, column layout and widths, sort order and state filter persist across restarts, per service.
 - Config lives in `~/.config/debrid-applet/config.json`; delete it to start over. To see the one-time double-click question again, set `dblclick_asked` to `false` there.
 

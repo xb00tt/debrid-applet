@@ -743,6 +743,23 @@ def test_log_levels():
     assert s("action", "garbage")  # unknown setting behaves like the default
 
 
+def test_footer_helpers():
+    import debrid_applet as da
+    assert da.plan_color("premium") == da.PALETTE["done"] and da.plan_color("Essential") == da.PALETTE["done"]
+    assert da.plan_color("trial") == da.PALETTE["warn"] and da.plan_color("free") == da.PALETTE["error"]
+    assert da.expiry_text("") == "no expiry"
+    from datetime import date, timedelta
+    soon = (date.today() + timedelta(days=3)).isoformat()
+    assert da.expiry_text(soon) == f"expires {soon} (in 3 days)"
+    assert da.expiry_text(date.today().isoformat()) == f"expires {date.today().isoformat()} (today)"
+    past = (date.today() - timedelta(days=2)).isoformat()
+    assert da.expiry_text(past) == f"expired {past}"
+    rows = [{"speed": 1000, "up_speed": 200, "done": False, "size": 10}, {"speed": 0, "up_speed": None, "done": True, "size": 20}]
+    assert da.totals_text(rows, shown=2, ticked=0) == "⬇ 1000 B/s · ⬆ 200 B/s · 1 active · 2 items · 30 B"
+    assert da.totals_text(rows, shown=1, ticked=1) == "⬇ 1000 B/s · ⬆ 200 B/s · 1 active · 2 items · 30 B · showing 1 · 1 ticked"
+    assert da.totals_text([], shown=0, ticked=0) == "0 items"
+
+
 def test_add_label():
     import debrid_applet
     assert debrid_applet.add_label("magnet:?xt=urn:btih:abc&dn=Some+Name+S01") == "Some Name S01"

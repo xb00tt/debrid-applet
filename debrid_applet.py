@@ -33,6 +33,8 @@ PLAYERS = ("mpv", "vlc", "celluloid", "smplayer", "totem")
 SUB_FLAG = {"mpv": "--sub-file={}", "celluloid": "--mpv-sub-file={}", "smplayer": "-sub {}", "vlc": "--sub-file={}"}
 SUB_EXT = (".srt", ".ass", ".vtt", ".sub")
 SERVICES = ("Torbox", "Real-Debrid", "AllDebrid")
+DASHBOARDS = {"Torbox": "https://torbox.app/dashboard", "Real-Debrid": "https://real-debrid.com/torrents",
+              "AllDebrid": "https://alldebrid.com/magnets"}
 EXPIRY_WARN_DAYS = 7
 VIDEO_EXT = (".mkv", ".mp4", ".avi", ".m4v", ".webm", ".mov", ".ts", ".wmv", ".flv")
 GLib.set_prgname(APP_ID)
@@ -168,6 +170,40 @@ def download_command(urls, dest, tool):
 
 def safe_dirname(name):
     return re.sub(r"[^\w.\- \[\]()]", "_", name).strip()[:120] or "download"
+
+
+def plan_color(plan):
+    p = (plan or "").lower()
+    if p == "trial":
+        return PALETTE["warn"]
+    if p == "free":
+        return PALETTE["error"]
+    return PALETTE["done"]
+
+
+def expiry_text(expires):
+    days = days_until(expires)
+    if days is None:
+        return "no expiry"
+    if days < 0:
+        return f"expired {expires}"
+    when = "today" if days == 0 else f"in {days} day{'s' if days != 1 else ''}"
+    return f"expires {expires} ({when})"
+
+
+def totals_text(torrents, shown, ticked):
+    if not torrents:
+        return "0 items"
+    down = sum(t["speed"] or 0 for t in torrents)
+    up = sum(t["up_speed"] or 0 for t in torrents)
+    active = sum(1 for t in torrents if not t["done"])
+    size = sum(t["size"] or 0 for t in torrents)
+    parts = [f"⬇ {human_size(down)}/s", f"⬆ {human_size(up)}/s", f"{active} active", f"{len(torrents)} items", human_size(size)]
+    if shown != len(torrents):
+        parts.append(f"showing {shown}")
+    if ticked:
+        parts.append(f"{ticked} ticked")
+    return " · ".join(parts)
 
 
 def strict_videos(links):
@@ -415,8 +451,7 @@ class ServiceTab(Gtk.Box):
         self._applying = True  # suppress columns-changed while we build or restore the layout
         self._hold_until = 0
         self._width_timer = 0  # debounce for saving dragged column widths
-
-        self.account_label = Gtk.Label(xalign=0, label="Not configured" if client is None else "Loading…")
+        self._updated_at = 0  # time of the last successful poll, shown in the footer
 
         row = Gtk.Box(spacing=2)
         for icon, tip, cb in (("list-add-symbolic", "Add magnets / links", self.on_add),
@@ -496,9 +531,7 @@ class ServiceTab(Gtk.Box):
         scroller.add(self.view)
         self.pack_start(scroller, True, True, 0)
 
-        self.status = Gtk.Label(xalign=0)
-        self.pack_start(self.status, False, False, 0)
-        self.pack_start(self.account_label, False, False, 0)
+        self.pack_start(self._build_footer(), False, False, 0)
 
         self.view.get_selection().connect("changed", lambda _s: self._update_buttons())
         self._update_buttons()
@@ -509,6 +542,53 @@ class ServiceTab(Gtk.Box):
         self.drag_dest_add_text_targets()
         self.connect("drag-data-received",
                      lambda _w, _c, _x, _y, data, _i, _t: self.add_items(drop_items(data.get_uris(), data.get_text())))
+
+    # ----- footer -----
+    def _build_footer(self):
+        foot = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        foot.pack_start(Gtk.Separator(), False, False, 2)
+        row1 = Gtk.Box(spacing=8)
+        self.status = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END, hexpand=True)
+        self.spinner = Gtk.Spinner()
+        self.poll_label = Gtk.Label(xalign=1)
+        self.poll_label.get_style_context().add_class("dim-label")
+        row1.pack_start(self.status, True, True, 0)
+        row1.pack_end(self.poll_label, False, False, 0)
+        row1.pack_end(self.spinner, False, False, 0)
+        row2 = Gtk.Box(spacing=8)
+        self.account_label = Gtk.Label(xalign=0, use_markup=True, ellipsize=Pango.EllipsizeMode.END)
+        self.account_label.set_markup("Not configured" if self.client is None else "Loading…")
+        self.totals_label = Gtk.Label(xalign=1)
+        self.totals_label.get_style_context().add_class("dim-label")
+        self.dash_btn = icon_button("web-browser-symbolic", f"Open {self.name} in the browser",
+                                    lambda _b: open_url(DASHBOARDS.get(self.name, "")))
+        row2.pack_start(self.account_label, True, True, 0)
+        row2.pack_end(self.dash_btn, False, False, 0)
+        row2.pack_end(self.totals_label, False, False, 0)
+        foot.pack_start(row1, False, False, 0)
+        foot.pack_start(row2, False, False, 0)
+        return foot
+
+    def set_polling(self, on):
+        (self.spinner.start if on else self.spinner.stop)()
+
+    def set_poll_interval(self, seconds):
+        self._poll_every = seconds
+        self._update_poll_label()
+
+    def _update_poll_label(self):
+        when = time.strftime("%H:%M:%S", time.localtime(self._updated_at)) if self._updated_at else "never"
+        self.poll_label.set_text(f"updated {when} · every {getattr(self, '_poll_every', POLL_SLOW)} s")
+
+    def _update_account(self, account):
+        plan = GLib.markup_escape_text(account["plan"])
+        self.account_label.set_markup(
+            f'<span background="{plan_color(account["plan"])}" foreground="#ffffff"> {plan} </span>  '
+            f"{GLib.markup_escape_text(expiry_text(account['expires']))} · {GLib.markup_escape_text(account['extra'])}")
+
+    def _update_totals(self):
+        visible_ids = {r[0] for r in self.store}
+        self.totals_label.set_text(totals_text(self.torrents, len(self.store), len(self.checked & visible_ids)))
 
     # ----- column layout (shared by both tabs through the config) -----
     def apply_columns(self):
@@ -641,6 +721,7 @@ class ServiceTab(Gtk.Box):
         rows = len(self.store)
         self.all_check.set_active(rows > 0 and all(r[CHECKED] for r in self.store))
         self._update_buttons()
+        self._update_totals()
 
     def _row(self, r):
         return {"id": r[0], "name": r[1], "kind": r[5], "hash": r[22]}
@@ -666,6 +747,7 @@ class ServiceTab(Gtk.Box):
 
     def _busy(self, flag):
         self._is_busy = flag
+        self.set_polling(flag)
         self._update_buttons()
 
     def say(self, msg, error=False):
@@ -699,8 +781,7 @@ class ServiceTab(Gtk.Box):
             if error == INVALID_KEY:
                 self.app.open_settings_once()
             return
-        self.account_label.set_text(
-            f"{account['plan']} · expires {account['expires'] or '—'} · {account['extra']}")
+        self._update_account(account)
         days = days_until(account["expires"])
         warned = self.app.cfg.setdefault("notified_expiry", {})
         if days is not None and days <= EXPIRY_WARN_DAYS and warned.get(self.name) != account["expires"]:
@@ -716,8 +797,8 @@ class ServiceTab(Gtk.Box):
         self._fill()
         self.active = sum(1 for t in torrents if not t["done"])
         log_event(self.name, f"Poll: {len(torrents)} items, {self.active} active", "verbose")
-        if time.monotonic() >= self._hold_until:
-            self.status.set_text(f"Updated {time.strftime('%H:%M:%S')} · {self.active} active")
+        self._updated_at = time.time()
+        self._update_poll_label()
 
         prev = self.done_ids
         self.done_ids = {t["id"] for t in torrents if t["done"]}
@@ -1398,6 +1479,8 @@ class App:
             return True
         self._refresh_again = False
         tabs = [t for t in self.tabs if t.client is not None]
+        for t in tabs:
+            t.set_polling(True)
 
         def fetch():
             results = []
@@ -1412,6 +1495,8 @@ class App:
 
         def done(results, _err):
             self.lock.release()
+            for t in tabs:
+                t.set_polling(False)
             for t, acc, tors, e in results or []:
                 t.render(acc, tors, e)
             active = sum(t.active for t in self.tabs)
@@ -1428,6 +1513,8 @@ class App:
             GLib.source_remove(self._timer)
         self._timer = GLib.timeout_add_seconds(seconds, self._tick)
         self.icon.set_tooltip_text(f"Debrid · polling every {seconds} s")
+        for t in self.tabs:
+            t.set_poll_interval(seconds)
 
     def _tick(self):
         self._timer = 0
