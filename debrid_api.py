@@ -136,7 +136,7 @@ class RealDebrid(_Client):
 
     def torrents(self):
         out = []
-        for t in self._json("GET", "/torrents", params={"limit": 100}) or []:
+        for t in self._json("GET", "/torrents", params={"limit": 2500}) or []:
             state = t.get("status", "")
             if state == "waiting_files_selection":
                 try:
@@ -225,7 +225,7 @@ class Torbox(_Client):
     def torrents(self):
         out = []
         for kind, path in (("torrent", "/torrents/mylist"), ("webdl", "/webdl/mylist")):
-            for t in self._json("GET", path, params={"bypass_cache": "true"}) or []:
+            for t in self._json("GET", path, params={"bypass_cache": "true", "limit": 5000}) or []:
                 state = t.get("download_state") or ""
                 done = bool(t.get("download_finished")) and bool(t.get("download_present"))
                 out.append({

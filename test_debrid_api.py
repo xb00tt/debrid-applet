@@ -82,7 +82,7 @@ def test_rd_torrents_normalize_and_autoselect():
     assert out[2]["finished"] == "2026-10-02T11:00:00.000Z" and out[2]["added"] == ""
     assert out[1]["seeds"] == 0 and out[1]["done"] is False
     assert out[2]["done"] is True
-    assert s.calls[0][2]["params"] == {"limit": 100}
+    assert s.calls[0][2]["params"] == {"limit": 2500}
     assert s.calls[1][:2] == ("POST", RD + "/torrents/selectFiles/B")
     assert s.calls[1][2]["data"] == {"files": "all"}
 
@@ -330,7 +330,7 @@ def test_tb_torrents_merges_webdl():
                       "size": 5, "seeds": 0, "speed": 0, "kind": "webdl", "up_speed": 0, "peers": 0, "ratio": 0.0,
                       "added": "", "finished": "", "hash": ""}
     assert s.calls[0][:2] == ("GET", TB + "/torrents/mylist")
-    assert s.calls[0][2]["params"] == {"bypass_cache": "true"}
+    assert s.calls[0][2]["params"] == {"bypass_cache": "true", "limit": 5000}
     assert s.calls[1][:2] == ("GET", TB + "/webdl/mylist")
 
 
