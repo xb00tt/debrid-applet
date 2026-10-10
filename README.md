@@ -176,7 +176,7 @@ Notifications, clipboard watcher and remembered filter are on by default; everyt
 python3 test_debrid_api.py
 ```
 
-Offline tests with canned API responses, no GTK needed. `debrid_api.py` holds the three HTTP clients
+The same suite runs on GitHub Actions for every push (`.github/workflows/tests.yml`). Offline tests with canned API responses, no GTK needed. `debrid_api.py` holds the three HTTP clients
 behind one interface; `debrid_local_api.py` is the loopback HTTP API; `debrid_applet.py` is the GTK side. Design notes live in `docs/superpowers/`.
 
 The GTK side has no unit tests; it is checked by rendering a `ServiceTab` with sample rows into a
