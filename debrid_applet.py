@@ -165,6 +165,8 @@ STORE_TYPES = (str, str, int, str, str, str, bool,  # 0 id, 1 name, 2 progress, 
 CHECKED, STATUS_HOLD = 6, 8
 NUMERIC = ("dl", "ul", "seeds", "peers", "ratio", "size")  # right-aligned
 PALETTE = {"active": "#3b82f6", "done": "#22c55e", "seed": "#14b8a6", "warn": "#f59e0b", "error": "#ef4444"}
+STATE_FILTERS = (("all", "All states"), ("active", "Active"), ("done", "Done"), ("seed", "Seeding"),
+                 ("warn", "Stalled"), ("error", "Error"))
 CSS = b"""
 treeview.view.progressbar { background-color: #e8761b; border-color: #e8761b; color: #ffffff; }
 treeview.view.progressbar:selected { background-color: #ffffff; border-color: #ffffff; color: #e8761b; }
@@ -217,7 +219,15 @@ class ServiceTab(Gtk.Box):
         self.search = Gtk.SearchEntry(placeholder_text="Filter", width_chars=30)
         self.search.connect("changed", lambda _e: self._fill())
         self.search.connect("stop-search", lambda e: e.set_text(""))  # Escape clears
-        row.set_center_widget(self.search)
+        self.state_filter = Gtk.ComboBoxText()
+        for key, label in STATE_FILTERS:
+            self.state_filter.append(key, label)
+        self.state_filter.set_active_id("all")
+        self.state_filter.connect("changed", lambda _c: self._fill())
+        center = Gtk.Box(spacing=6)
+        center.pack_start(self.search, False, False, 0)
+        center.pack_start(self.state_filter, False, False, 0)
+        row.set_center_widget(center)
         self.pack_start(row, False, False, 0)
 
         self.store = Gtk.ListStore(*STORE_TYPES)
@@ -420,10 +430,13 @@ class ServiceTab(Gtk.Box):
     def _fill(self):
         """Rebuild the list from the last poll, keeping rows whose name or state matches the filter box."""
         q = self.search.get_text().strip().lower()
+        kind = self.state_filter.get_active_id() or "all"
         selected = self._selected()
         self.store.clear()
         for t in self.torrents:
             if q and q not in t["name"].lower() and q not in t["state"].lower():
+                continue
+            if kind != "all" and state_kind(t["state"]) != kind:
                 continue
             self.store.append([
                 t["id"], t["name"], int(max(0, min(100, t["progress"]))), t["state"], human_size(t["size"]), t["kind"],
