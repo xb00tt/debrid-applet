@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Tray control panel for Torbox and Real-Debrid."""
+import ipaddress
 import json
 import os
 import re
 import secrets
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -185,11 +187,9 @@ def add_one(client, item):
     if low.startswith("magnet:"):
         client.add_magnet(item)
     elif low.startswith(("http://", "https://")) and low.split("?")[0].endswith(".torrent"):
-        import requests  # a .torrent URL: fetch it, upload the file
-        r = requests.get(item, timeout=20)
-        r.raise_for_status()
+        data = fetch_bytes(item, TORRENT_MAX)  # a .torrent URL: fetch it (public hosts only), upload the file
         with tempfile.NamedTemporaryFile(suffix=".torrent", delete=False) as f:
-            f.write(r.content)
+            f.write(data)
         try:
             client.add_torrent_file(f.name)
         finally:
@@ -380,6 +380,43 @@ def read_magnets(path):
             if line and not line.startswith("#"):
                 out.append(line.split("\t", 1)[0].strip())
     return out
+
+
+TORRENT_MAX = 5_000_000  # bytes; .torrent files are small, feeds too
+FEED_MAX = 5_000_000
+
+
+def is_public_host(host):
+    """False for loopback, private, link-local and unresolvable hosts: targets a fetch must not reach."""
+    if not host:
+        return False
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return False
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+            return False
+    return bool(infos)
+
+
+def fetch_bytes(url, max_bytes, allow_private=False):
+    """GET a URL with a hard size cap; refuses private/loopback hosts unless the caller trusts the URL."""
+    import requests
+    if not allow_private and not is_public_host(urlparse(url).hostname or ""):
+        raise ApiError("refusing to fetch from a private or local address")
+    try:
+        with requests.get(url, timeout=20, stream=True, headers={"User-Agent": "debrid-applet"}) as r:
+            r.raise_for_status()
+            data = b""
+            for chunk in r.iter_content(65536):
+                data += chunk
+                if len(data) > max_bytes:
+                    raise ApiError(f"{url} is larger than {max_bytes // 1_000_000} MB")
+    except requests.RequestException as e:
+        raise ApiError(f"fetch failed: {e}") from e
+    return data
 
 
 def parse_feed(xml_text):
@@ -2148,16 +2185,14 @@ class FeedWatcher:
         seen = set(self.app.cfg.get("feed_seen") or [])
 
         def work():
-            import requests
             found, errors = [], []
             for url, pattern, service in feeds:
-                try:
-                    r = requests.get(url, timeout=20, headers={"User-Agent": "debrid-applet"})
-                    r.raise_for_status()
-                except Exception as e:
+                try:  # feeds are typed into Settings by the user, so local servers are allowed; size is capped
+                    text = fetch_bytes(url, FEED_MAX, allow_private=True).decode("utf-8", "replace")
+                except ApiError as e:
                     errors.append(f"{url}: {e}")
                     continue
-                for guid, title, link in parse_feed(r.text):
+                for guid, title, link in parse_feed(text):
                     key = f"{url}#{guid}"
                     if key in seen or not feed_matches(title, pattern):
                         continue

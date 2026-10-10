@@ -902,6 +902,33 @@ def test_feeds():
     assert not da.feed_matches("Show.720p", "1080p")
 
 
+def test_fetch_bytes_guards():
+    import threading, http.server, os
+    import debrid_applet as da
+    assert not da.is_public_host("127.0.0.1") and not da.is_public_host("10.1.2.3") and not da.is_public_host("localhost")
+    assert da.is_public_host("8.8.8.8") and not da.is_public_host("")
+    root = "/tmp/debrid-test-http"
+    os.makedirs(root, exist_ok=True)
+    open(os.path.join(root, "small.torrent"), "wb").write(b"d8:announce0:e")
+    open(os.path.join(root, "big.bin"), "wb").write(b"x" * 300_000)
+    handler = lambda *a, **k: http.server.SimpleHTTPRequestHandler(*a, directory=root, **k)
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    try:
+        da.fetch_bytes(base + "/small.torrent", 1000)
+        assert False, "loopback must be refused by default"
+    except ApiError as e:
+        assert "private or local" in str(e)
+    assert da.fetch_bytes(base + "/small.torrent", 1000, allow_private=True) == b"d8:announce0:e"
+    try:
+        da.fetch_bytes(base + "/big.bin", 100_000, allow_private=True)
+        assert False
+    except ApiError as e:
+        assert "larger than" in str(e)
+    srv.shutdown()
+
+
 def test_add_label():
     import debrid_applet
     assert debrid_applet.add_label("magnet:?xt=urn:btih:abc&dn=Some+Name+S01") == "Some Name S01"

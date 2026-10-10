@@ -112,7 +112,8 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 - **RSS watch lists.** Settings takes feeds, one per line as `url | regex | service` (regex and service optional;
   the regex is matched case-insensitively against the item title). Every N minutes (default 15) new matching items
   whose link is a magnet or a `.torrent` file are added to that service; `.torrent` URLs are fetched and uploaded.
-  Seen items are remembered so nothing is added twice.
+  Seen items are remembered so nothing is added twice. Fetches are capped at 5 MB; `.torrent` URLs are only
+  fetched from public hosts (feeds you configure may live on your LAN).
 - **Expiry warning.** One notification per service when premium ends within 7 days.
 - **Activity log.** Clock icon in the toolbar (or `Ctrl+L`): status messages and notifications with a timestamp,
   newest last, with Refresh / Open file / Clear. Kept in `~/.local/share/debrid-applet/activity.log`. Settings choose
