@@ -14,9 +14,8 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 gi.require_version("Pango", "1.0")
 gi.require_version("Notify", "0.7")
-gi.require_version("AyatanaAppIndicator3", "0.1")
-from gi.repository import Gdk, GLib, Gtk, Notify, Pango  # noqa: E402
-from gi.repository import AyatanaAppIndicator3 as AppIndicator  # noqa: E402
+gi.require_version("XApp", "1.0")
+from gi.repository import Gdk, GLib, Gtk, Notify, Pango, XApp  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -292,10 +291,12 @@ class App:
         self._settings_shown_for = None
         self.tabs = []
 
-        self.indicator = AppIndicator.Indicator.new(
-            APP_ID, APP_ID, AppIndicator.IndicatorCategory.APPLICATION_STATUS)
-        self.indicator.set_icon_theme_path(HERE)
-        self.indicator.set_status(AppIndicator.IndicatorStatus.ACTIVE)
+        # Cinnamon-native tray icon: left click toggles the window, right click opens the menu.
+        self.icon = XApp.StatusIcon()
+        self.icon.set_name(APP_ID)
+        self.icon.set_icon_name(os.path.join(HERE, "debrid-applet.svg"))
+        self.icon.set_tooltip_text("Debrid")
+        self.icon.connect("activate", self.toggle_window)
         menu = Gtk.Menu()
         for label, cb in (("Open", self.toggle_window), ("Refresh", self.refresh),
                           ("Settings…", self.open_settings), ("Quit", Gtk.main_quit)):
@@ -303,8 +304,7 @@ class App:
             item.connect("activate", cb)
             menu.append(item)
         menu.show_all()
-        self.indicator.set_menu(menu)
-        self.indicator.set_secondary_activate_target(menu.get_children()[0])
+        self.icon.set_secondary_menu(menu)
 
         self.window = Gtk.Window(title="Debrid", default_width=640, default_height=480)
         self.window.connect("delete-event", lambda w, _e: w.hide() or True)
@@ -358,7 +358,7 @@ class App:
             for t, acc, tors, e in results or []:
                 t.render(acc, tors, e)
             active = sum(t.active for t in self.tabs)
-            self.indicator.set_label(f"{active}↓" if active else "", "")
+            self.icon.set_label(f"{active}↓" if active else "")
         run_async(fetch, done)
         return True
 

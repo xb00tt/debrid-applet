@@ -8,7 +8,7 @@ opens download links in the browser, deletes items, notifies when a download fin
 
     ./install.sh
 
-Needs `python3-gi`, `gir1.2-ayatanaappindicator3-0.1`, `gir1.2-notify-0.7`, `python3-requests`
+Needs `python3-gi`, `gir1.2-xapp-1.0`, `gir1.2-notify-0.7`, `python3-requests`
 (all present on a stock Mint 22 install). Autostarts on login; start it now with the command the installer prints.
 
 ## First run
@@ -18,7 +18,7 @@ https://real-debrid.com/apitoken → Save. Keys live in `~/.config/debrid-applet
 
 ## Use
 
-- Tray icon click or **Open**: popup with one tab per service.
+- Left-click the tray icon to show/hide the popup (one tab per service); right-click for Refresh / Settings / Quit.
 - Paste a `magnet:` link or hoster URL, press Enter. Real-Debrid hoster links are unrestricted and the direct URL is copied to the clipboard; Torbox queues them as web downloads.
 - `.torrent` button uploads a file.
 - Select a row: **Links ▾** lists files (click opens in browser, or copy all), **Copy first link**, **Delete**.
