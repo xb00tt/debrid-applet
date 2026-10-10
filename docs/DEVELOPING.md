@@ -1,0 +1,42 @@
+# Developing
+
+## Tests
+
+```bash
+python3 test_debrid_api.py
+```
+
+Offline tests with canned API responses, no GTK needed; the same suite runs on GitHub Actions for every push
+(`.github/workflows/tests.yml`). The GTK side has no unit tests: it is checked by rendering a `ServiceTab` with sample
+rows into a `Gtk.OffscreenWindow` and by driving the running applet with `xdotool` plus screenshots. `xdotool type`
+mangles `[` and `|` on some keyboard layouts, so use the clipboard or bracket-free paths when scripting dialogs.
+
+## Repository layout
+
+- `debrid_api.py`: the three service clients behind one interface, plus helpers (`magnet_hash`, `human_size`).
+- `debrid_local_api.py`: the loopback HTTP API.
+- `debrid_applet.py`: everything GTK: tabs, footer, settings form, watchers, notifications, command line.
+- `test_debrid_api.py`: the offline suite; run it directly, no test runner needed.
+- `install.sh`, `debrid-applet.desktop`, `debrid-applet.svg`: per-user install.
+- `packaging/build-deb.sh`: builds the Debian package the release workflow publishes.
+- `.github/workflows/`: `tests.yml` on every push, `release.yml` on `v*` tags.
+- `docs/MANUAL.md`: the user manual; `docs/superpowers/`: the original design spec and plan.
+
+## Where things live at runtime
+
+- Config: `~/.config/debrid-applet/config.json` (mode 600; versioned and migrated on load).
+- Activity log and download logs: `~/.local/share/debrid-applet/`.
+- Per-user install: `~/.local/share/debrid-applet/`; package install: `/usr/share/debrid-applet/`.
+
+## Releases
+
+Bump `VERSION` in `debrid_applet.py`, tag `vX.Y.Z` and push the tag. The release workflow runs the tests, refuses a
+tag that doesn't match `VERSION`, builds the `.deb` (via `packaging/build-deb.sh`) and a source tarball, and publishes
+a GitHub release with generated notes. `packaging/build-deb.sh` also works locally on any Debian-based box.
+
+## Adding a service
+
+One client class in `debrid_api.py` implementing `account`, `torrents`, `add_magnet`, `add_torrent_file`,
+`add_link`, `links`, `delete` (optionally `check_cached` and `control`), a key field in the Settings form, a line in
+`build_tabs()`, and a default in `DEFAULT_HIDDEN` for columns it never reports. Verify it against the live API
+before shipping; every service so far needed fixes that only real keys exposed. See `../TODO.md` for what is not planned.
