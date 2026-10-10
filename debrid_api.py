@@ -53,6 +53,22 @@ class _Client:
         return r
 
 
+def _body(r, service):
+    """Decode JSON or raise a readable ApiError (Cloudflare pages, maintenance HTML)."""
+    try:
+        return r.json()
+    except ValueError:
+        raise ApiError(f"Unexpected response from {service}") from None
+
+
+def _direct_url(u):
+    """Real-Debrid unrestrict: 'download', or the first 'alternative' for hosters without a direct file."""
+    url = u.get("download") or (u.get("alternative") or [{}])[0].get("download")
+    if not url:
+        raise ApiError("No direct link returned")
+    return url
+
+
 def _json_or_none(r):
     try:
         body = r.json()
@@ -74,7 +90,7 @@ class RealDebrid(_Client):
 
     def _json(self, method, path, **kw):
         r = self._req(method, path, **kw)
-        return None if r.status_code == 204 or not r.text else r.json()
+        return None if r.status_code == 204 or not r.text else _body(r, self.name)
 
     def account(self):
         u = self._json("GET", "/user") or {}
@@ -130,11 +146,14 @@ class RealDebrid(_Client):
             except ApiError as e:
                 out.append({"name": f"Failed: {e}", "url": None})
                 break  # keep what we have; retrying immediately would only add more 429s
-            out.append({"name": u.get("filename") or link, "url": u["download"]})
+            try:
+                out.append({"name": u.get("filename") or link, "url": _direct_url(u)})
+            except ApiError as e:
+                out.append({"name": f"{u.get('filename') or link}: {e}", "url": None})
         return out
 
     def add_link(self, url):
-        return self._json("POST", "/unrestrict/link", data={"link": url})["download"]
+        return _direct_url(self._json("POST", "/unrestrict/link", data={"link": url}))
 
 
 class Torbox(_Client):
@@ -142,7 +161,9 @@ class Torbox(_Client):
     name = "Torbox"
     PLANS = {0: "Free", 1: "Essential", 2: "Pro", 3: "Standard"}
     def _json(self, method, path, **kw):
-        body = self._req(method, path, **kw).json()
+        body = _body(self._req(method, path, **kw), self.name)
+        if not isinstance(body, dict):
+            raise ApiError(f"Unexpected response from {self.name}")
         if not body.get("success"):
             if body.get("error") in TORBOX_AUTH_ERRORS:
                 raise ApiError(INVALID_KEY)
@@ -194,8 +215,15 @@ class Torbox(_Client):
         else:
             list_path, dl_path, id_key = "/torrents/mylist", "/torrents/requestdl", "torrent_id"
         item = self._json("GET", list_path, params={"id": int(tid), "bypass_cache": "true"}) or {}
+        files = item.get("files") or []
         out = []
-        for f in item.get("files") or []:
+        if len(files) > 1:  # one request for everything, before the per-file ones
+            try:
+                zip_url = self._json("GET", dl_path, params={"token": self.token, id_key: int(tid), "zip_link": "true"})
+                out.append({"name": "All files (zip)", "url": zip_url})
+            except ApiError as e:
+                out.append({"name": f"Zip failed: {e}", "url": None})
+        for f in files:
             try:
                 url = self._json("GET", dl_path, params={"token": self.token, id_key: int(tid), "file_id": f["id"]})
             except ApiError as e:

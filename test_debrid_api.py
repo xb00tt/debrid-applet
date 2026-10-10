@@ -271,18 +271,50 @@ def test_tb_delete_routes_on_kind():
     assert s.calls[1][2]["json"] == {"webdl_id": 3, "operation": "delete"}
 
 
-def test_tb_links_requestdl_per_file():
+def test_tb_links_zip_then_per_file():
     s = FakeSession(
         ok({"id": 7, "files": [{"id": 0, "name": "dir/a.mkv", "short_name": "a.mkv"}, {"id": 1, "name": "b.srt"}]}),
+        ok("https://cdn/zip"),
         ok("https://cdn/a"),
         ok("https://cdn/b"),
     )
     out = Torbox("tok", s).links("7", "torrent")
-    assert out == [{"name": "a.mkv", "url": "https://cdn/a"}, {"name": "b.srt", "url": "https://cdn/b"}]
+    assert out == [{"name": "All files (zip)", "url": "https://cdn/zip"},
+                   {"name": "a.mkv", "url": "https://cdn/a"}, {"name": "b.srt", "url": "https://cdn/b"}]
     assert s.calls[0][:2] == ("GET", TB + "/torrents/mylist")
     assert s.calls[0][2]["params"] == {"id": 7, "bypass_cache": "true"}
     assert s.calls[1][:2] == ("GET", TB + "/torrents/requestdl")
-    assert s.calls[1][2]["params"] == {"token": "tok", "torrent_id": 7, "file_id": 0}
+    assert s.calls[1][2]["params"] == {"token": "tok", "torrent_id": 7, "zip_link": "true"}
+    assert s.calls[2][2]["params"] == {"token": "tok", "torrent_id": 7, "file_id": 0}
+
+
+def test_non_json_200_is_api_error():
+    def html():
+        r = FakeResp(200, None)
+        r.text = "<html>maintenance</html>"
+        return r
+    for client in (RealDebrid("t", FakeSession(html())), Torbox("t", FakeSession(html()))):
+        try:
+            client.account()
+            assert False
+        except ApiError as e:
+            assert str(e) == f"Unexpected response from {client.name}"
+
+
+def test_rd_unrestrict_alternative():
+    s = FakeSession(FakeResp(200, {"filename": "yt", "alternative": [{"download": "https://cdn/alt"}]}))
+    assert RealDebrid("t", s).add_link("https://yt/x") == "https://cdn/alt"
+    try:
+        RealDebrid("t", FakeSession(FakeResp(200, {"filename": "none"}))).add_link("https://yt/y")
+        assert False
+    except ApiError as e:
+        assert str(e) == "No direct link returned"
+    s = FakeSession(FakeResp(200, {"id": "A", "links": ["https://rd/1", "https://rd/2"]}),
+                    FakeResp(200, {"filename": "none"}),
+                    FakeResp(200, {"filename": "two", "download": "https://cdn/two"}))
+    out = RealDebrid("t", s).links("A")
+    assert out[0]["url"] is None and "No direct link" in out[0]["name"]
+    assert out[1] == {"name": "two", "url": "https://cdn/two"}
 
 
 def test_tb_links_webdl():

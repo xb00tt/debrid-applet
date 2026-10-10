@@ -18,8 +18,12 @@ gi.require_version("AyatanaAppIndicator3", "0.1")
 from gi.repository import Gdk, GLib, Gtk, Notify, Pango  # noqa: E402
 from gi.repository import AyatanaAppIndicator3 as AppIndicator  # noqa: E402
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
 from debrid_api import ApiError, RealDebrid, Torbox, human_size  # noqa: E402
+
+APP_ID = "debrid-applet"  # WM_CLASS, icon name and .desktop basename all match
+GLib.set_prgname(APP_ID)
 
 CONFIG_DIR = os.path.expanduser("~/.config/debrid-applet")
 CONFIG = os.path.join(CONFIG_DIR, "config.json")
@@ -81,7 +85,7 @@ def open_url(url):
 
 
 def notify(title, body):
-    Notify.Notification.new(title, body, "folder-download").show()
+    Notify.Notification.new(title, body, APP_ID).show()
 
 
 def red(text):
@@ -280,14 +284,17 @@ class ServiceTab(Gtk.Box):
 
 class App:
     def __init__(self):
-        Notify.init("debrid-applet")
+        Notify.init(APP_ID)
+        Gtk.IconTheme.get_default().append_search_path(HERE)  # debrid-applet.svg next to this file
+        Gtk.Window.set_default_icon_name(APP_ID)
         self.cfg = load_config()
         self.lock = threading.Lock()
         self._settings_shown_for = None
         self.tabs = []
 
         self.indicator = AppIndicator.Indicator.new(
-            "debrid-applet", "folder-download-symbolic", AppIndicator.IndicatorCategory.APPLICATION_STATUS)
+            APP_ID, APP_ID, AppIndicator.IndicatorCategory.APPLICATION_STATUS)
+        self.indicator.set_icon_theme_path(HERE)
         self.indicator.set_status(AppIndicator.IndicatorStatus.ACTIVE)
         menu = Gtk.Menu()
         for label, cb in (("Open", self.toggle_window), ("Refresh", self.refresh),
