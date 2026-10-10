@@ -945,9 +945,8 @@ class ServiceTab(Gtk.Box):
             if err:
                 return
             replies, errors = res
-            msg = f"{op.replace('_', ' ').capitalize()}: " + "; ".join(sorted(set(replies)) or ["no reply"])
-            if errors:
-                msg += " · " + "; ".join(errors)
+            parts = sorted(set(replies)) + errors
+            msg = f"{op.replace('_', ' ').capitalize()}: " + "; ".join(parts)
             self.say(msg, error=bool(errors))
             self.app.refresh()
             GLib.timeout_add_seconds(5, lambda: self.app.refresh() and False)
