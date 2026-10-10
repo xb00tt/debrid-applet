@@ -163,6 +163,17 @@ Notifications, clipboard watcher and remembered filter are on by default; everyt
 - Adds that fail with a rate limit or a network error are retried every 60 s, up to three times.
 - Config lives in `~/.config/debrid-applet/config.json` (versioned, migrated on load); delete it to start over. To see the one-time double-click question again, set `dblclick_asked` to `false` there.
 
+## Troubleshooting
+
+- **Tabs say "Not configured" after a restart** and you had the keyring option on: the keyring returned nothing
+  (a notification says so). Paste the keys again in Settings → Accounts; the applet keeps them in the file until the
+  keyring confirms it has them.
+- **Two tray icons**: one is a leftover from an instance that was killed mid-poll; it disappears on the next restart
+  of the applet, or restart Cinnamon (Ctrl+Alt+Esc on Mint).
+- **Window gone**: left-click the tray icon, run the script again, or `--toggle`.
+- **Something failed silently**: `Ctrl+L` opens the activity log; `~/.local/share/debrid-applet/applet.log` has the
+  process's own stderr.
+
 ## Dev
 
 ```bash
