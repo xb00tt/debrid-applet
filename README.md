@@ -1,6 +1,6 @@
 # Debrid Applet
 
-Tray control panel for **Torbox** and **Real-Debrid** on Linux Mint (Cinnamon).
+Tray control panel for **Torbox**, **Real-Debrid** and **AllDebrid** on Linux Mint (Cinnamon).
 One window, one tab per service: account status, every torrent with live progress,
 add magnets / `.torrent` files / hoster links, stream or download the results, tidy up.
 
@@ -20,9 +20,10 @@ is optional and enables **Play**.
 ## First run
 
 Right-click the tray icon → **Settings…** → paste your API keys
-(from <https://torbox.app/settings> and <https://real-debrid.com/apitoken>) → **Test keys** → **Save**.
+(from <https://torbox.app/settings>, <https://real-debrid.com/apitoken>, <https://alldebrid.com/apikeys>) → **Test keys** → **Save**.
+Leave a key empty and that tab just says "Not configured".
 Keys are stored in `~/.config/debrid-applet/config.json` with mode 600 and never leave your machine
-except in requests to the two services.
+except in requests to the services.
 
 ## Tray icon
 
@@ -34,7 +35,7 @@ except in requests to the two services.
 
 - **+** opens a box for magnets and hoster links, one per line. On the Torbox tab each magnet is marked
   ✓ cached / ✗ not cached as you type. Real-Debrid hoster links are unrestricted on the spot and the direct
-  URLs copied to the clipboard; Torbox queues them as web downloads.
+  URLs copied to the clipboard; Torbox queues them as web downloads; AllDebrid unlocks them like Real-Debrid.
 - Folder icon picks one or more `.torrent` files.
 - Drop `.torrent` files, links or magnet text anywhere on a tab.
 - Copy a magnet link anywhere on the desktop: a notification offers **Add to Torbox / Add to Real-Debrid**
@@ -50,7 +51,7 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 | **Play** | toolbar, context menu, double-click | streams the video in your player; picker when there are several |
 | **Files** | toolbar, context menu, finished notification | panel with every file and its size; tick some, then Download via browser / Play / Copy links / aria2c command |
 | **Copy links** | toolbar, context menu, `Ctrl+C` | every direct URL of the ticked items |
-| **Copy magnet** | context menu | magnet links rebuilt from the info hashes |
+| **Copy magnet** | context menu | magnet links rebuilt from the info hashes (not on AllDebrid, its API doesn't return them) |
 | **Copy as aria2c command** | context menu | resumable 8-connection `aria2c` command into `~/Downloads` |
 | **Resume / Stop seeding / Reannounce** | context menu, Torbox only | what Torbox lets you do with a torrent; Torbox confirms at once but the State column can lag |
 | **Delete** | toolbar, context menu, `Delete` key | removes from the service; asks once when more than one is ticked |
@@ -60,7 +61,8 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 - Filter box matches name or state as you type; the dropdown next to it narrows by state
   (Active / Done / Seeding / Stalled / Error); the dropdown choice is remembered per service (toggle in Settings). `Ctrl+F` focuses the box, `Esc` clears it.
 - Lists start newest-first. Click a header to sort, drag headers to reorder, right-click a header to show or hide columns.
-  Layout and sort are remembered per service. Real-Debrid hides Up / Peers / Ratio by default since it never reports them.
+  Layout and sort are remembered per service. Columns a service never reports are hidden by default
+  (Real-Debrid: Up / Peers / Ratio, AllDebrid: Peers / Ratio).
 - Dates read "2 hours ago"; hover for the exact time.
 
 ## Keys
@@ -71,7 +73,7 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 
 Right-click the tray icon → **Settings…**, or the gear in the toolbar.
 
-- Torbox and Real-Debrid API keys, with **Test keys** to check them live.
+- Torbox, Real-Debrid and AllDebrid API keys, with **Test keys** to check them live.
 - Notify when a torrent is added · Notify when a download finishes on the service (the "finished"
   notification carries an **Open files** button).
 - Watch clipboard for magnet links.
