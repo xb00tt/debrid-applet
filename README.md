@@ -95,5 +95,10 @@ All four toggles are on by default.
 python3 test_debrid_api.py
 ```
 
-Offline tests with canned API responses, no GTK needed. `debrid_api.py` holds the two HTTP clients
+Offline tests with canned API responses, no GTK needed. `debrid_api.py` holds the three HTTP clients
 behind one interface; `debrid_applet.py` is the GTK side. Design notes live in `docs/superpowers/`.
+
+Adding a service: one client class in `debrid_api.py` implementing `account`, `torrents`, `add_magnet`,
+`add_torrent_file`, `add_link`, `links`, `delete` (optionally `check_cached` and `control`), a key field in
+Settings, a line in `build_tabs()`, a default in `DEFAULT_HIDDEN` for columns it never reports.
+See `TODO.md` for what is not planned.
