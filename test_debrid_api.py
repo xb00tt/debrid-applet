@@ -296,14 +296,24 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
     shutil.rmtree(tmp_dir, ignore_errors=True)
     debrid_applet.CONFIG_DIR = tmp_dir
     debrid_applet.CONFIG = os.path.join(tmp_dir, "config.json")
-    assert debrid_applet.load_config() == {"torbox_key": "", "realdebrid_key": ""}
-    debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b"})
+    defaults = {"torbox_key": "", "realdebrid_key": "", "notify_added": True, "notify_done": True}
+    assert debrid_applet.load_config() == defaults
+    debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b", "notify_done": False})
     assert stat.S_IMODE(os.stat(debrid_applet.CONFIG).st_mode) == 0o600
     assert stat.S_IMODE(os.stat(tmp_dir).st_mode) == 0o700
-    assert debrid_applet.load_config() == {"torbox_key": "a", "realdebrid_key": "b"}
+    assert debrid_applet.load_config() == {**defaults, "torbox_key": "a", "realdebrid_key": "b", "notify_done": False}
     with open(debrid_applet.CONFIG, "w") as f:
         f.write("{not json")
-    assert debrid_applet.load_config() == {"torbox_key": "", "realdebrid_key": ""}
+    assert debrid_applet.load_config() == defaults
+
+
+def test_add_label():
+    import debrid_applet
+    assert debrid_applet.add_label("magnet:?xt=urn:btih:abc&dn=Some+Name+S01") == "Some Name S01"
+    assert debrid_applet.add_label("magnet:?xt=urn:btih:abcdef").startswith("magnet:?xt=urn:btih:abcdef")
+    assert debrid_applet.add_label("/tmp/x/thing.torrent") == "thing.torrent"
+    assert debrid_applet.add_label("https://hoster/dir/file.bin") == "file.bin"
+    assert len(debrid_applet.add_label("x" * 500)) == 60
 
 
 if __name__ == "__main__":

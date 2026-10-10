@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import time
+from urllib.parse import parse_qs, urlparse
 
 import gi
 
@@ -22,7 +23,7 @@ from debrid_api import ApiError, RealDebrid, Torbox, human_size  # noqa: E402
 
 CONFIG_DIR = os.path.expanduser("~/.config/debrid-applet")
 CONFIG = os.path.join(CONFIG_DIR, "config.json")
-EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": ""}
+EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "notify_added": True, "notify_done": True}
 POLL_SECONDS = 30
 INVALID_KEY = "Invalid API key"
 
@@ -60,6 +61,19 @@ def copy_text(text):
     cb = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
     cb.set_text(text, -1)
     cb.store()
+
+
+def add_label(text):
+    """Short human name for a just-added magnet, file path or link (for notifications)."""
+    if text.lower().startswith("magnet:"):
+        dn = parse_qs(urlparse(text).query).get("dn")
+        if dn:
+            return dn[0][:60]
+    return (os.path.basename(text.rstrip("/")) or text)[:60]
+
+
+def notify(title, body):
+    Notify.Notification.new(title, body, "folder-download").show()
 
 
 def red(text):
@@ -176,36 +190,39 @@ class ServiceTab(Gtk.Box):
 
         prev = self.done_ids
         self.done_ids = {t["id"] for t in torrents if t["done"]}
-        if prev is not None:
+        if prev is not None and self.app.cfg["notify_done"]:
             for t in torrents:
                 if t["done"] and t["id"] not in prev:
-                    Notify.Notification.new(f"{self.name}: finished", t["name"], "folder-download").show()
+                    notify(f"{self.name}: finished", t["name"])
 
     # ----- actions -----
     def on_add(self, _w):
         text = self.entry.get_text().strip()
         if not text or self.client is None:
             return
+        label = add_label(text)
         if text.lower().startswith("magnet:"):
-            self._run(lambda: self.client.add_magnet(text), self._after_add)
+            self._run(lambda: self.client.add_magnet(text), lambda r, e: self._after_add(r, e, label))
         else:
-            self._run(lambda: self.client.add_link(text), self._after_add)
+            self._run(lambda: self.client.add_link(text), lambda r, e: self._after_add(r, e, label))
 
-    def _after_add(self, result, error):
+    def _after_add(self, result, error, label):
         if error:
             return
         self.entry.set_text("")
         if result:  # Real-Debrid returns the direct URL immediately
             copy_text(result)
             self.status.set_text("Link copied to clipboard")
+        if self.app.cfg["notify_added"]:
+            notify(f"{self.name}: added", label)
         self.app.refresh()
 
     def on_torrent_file(self, chooser):
         path = chooser.get_filename()
         chooser.unselect_all()
         if path and self.client is not None:
-            self._run(lambda: self.client.add_torrent_file(path),
-                      lambda _r, err: None if err else self.app.refresh())
+            label = add_label(path)
+            self._run(lambda: self.client.add_torrent_file(path), lambda r, e: self._after_add(r, e, label))
 
     def _fetch_links(self, cb):
         sel = self._selected()
@@ -346,10 +363,17 @@ class App:
             grid.attach(Gtk.Label(label=label, xalign=0), 0, i, 1, 1)
             grid.attach(entry, 1, i, 1, 1)
             entries[key] = entry
+        checks = {}
+        for i, (key, label) in enumerate((("notify_added", "Notify when torrent added"),
+                                          ("notify_done", "Notify when download finishes on service")), start=2):
+            check = Gtk.CheckButton(label=label, active=bool(self.cfg[key]))
+            grid.attach(check, 0, i, 2, 1)
+            checks[key] = check
         dlg.get_content_area().add(grid)
         dlg.show_all()
         if dlg.run() == Gtk.ResponseType.OK:
-            self.cfg = {k: e.get_text().strip() for k, e in entries.items()}
+            self.cfg = {**{k: e.get_text().strip() for k, e in entries.items()},
+                        **{k: c.get_active() for k, c in checks.items()}}
             save_config(self.cfg)
             self.build_tabs()
             self.refresh()
