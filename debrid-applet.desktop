@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=Debrid Applet
-Comment=Torbox and Real-Debrid control panel
-Exec=python3 @DIR@/debrid_applet.py
+Comment=Torbox, Real-Debrid and AllDebrid control panel
+Exec=@EXEC@
 Icon=debrid-applet
-StartupWMClass=debrid-applet
 Terminal=false
 Categories=Network;
+StartupWMClass=debrid-applet
 X-GNOME-Autostart-enabled=true

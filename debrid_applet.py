@@ -36,6 +36,7 @@ sys.path.insert(0, HERE)
 from debrid_api import AllDebrid, ApiError, RealDebrid, Torbox, human_size, magnet_hash  # noqa: E402
 from debrid_local_api import LocalApi  # noqa: E402
 
+VERSION = "1.0.0"
 APP_ID = "debrid-applet"  # WM_CLASS, icon name and .desktop basename all match
 DBUS_ID = "io.github.xb00tt.DebridApplet"  # single-instance guard
 PLAYERS = ("mpv", "vlc", "celluloid", "smplayer", "totem")
@@ -52,7 +53,8 @@ GLib.set_prgname(APP_ID)
 
 CONFIG_DIR = os.path.expanduser("~/.config/debrid-applet")
 CONFIG = os.path.join(CONFIG_DIR, "config.json")
-LOG_FILE = os.path.join(os.path.expanduser("~/.local/share/debrid-applet"), "activity.log")
+DATA_DIR = os.path.expanduser("~/.local/share/debrid-applet")  # logs; the code may live in /usr/share (read-only)
+LOG_FILE = os.path.join(DATA_DIR, "activity.log")
 LOG_MAX = 1_000_000  # default bytes; trimmed to the newest fifth when exceeded
 LOG_LEVELS = (("off", "Off"), ("errors", "Errors only"), ("actions", "Actions and notifications"),
               ("verbose", "Verbose (also every poll)"))
@@ -1153,7 +1155,8 @@ class ServiceTab(Gtk.Box):
                 self.say(f"Auto-download: no links for {t['name'][:40]}", error=True)
                 return
             os.makedirs(dest, exist_ok=True)
-            log = open(os.path.join(HERE, f"download-{safe_dirname(t['name'])[:40]}.log"), "ab")
+            os.makedirs(DATA_DIR, exist_ok=True)
+            log = open(os.path.join(DATA_DIR, f"download-{safe_dirname(t['name'])[:40]}.log"), "ab")
             proc = subprocess.Popen(download_command(urls, dest, tool), stdout=log, stderr=log)
             self.say(f"Auto-download: {len(urls)} file(s) via {tool} into {dest}")
             notify(f"{self.name}: downloading {len(urls)} file(s)", dest)
@@ -2228,7 +2231,7 @@ class SettingsForm:
         self._heading(g, "Activity log")
         self._combo(g, "log_level", "Level", list(LOG_LEVELS))
         self._spin(g, "log_max_kb", "Size limit (KB)", 50, 100000, 50)
-        self._note(g, f"File: {LOG_FILE}")
+        self._note(g, f"File: {LOG_FILE}\nDebrid Applet {VERSION}")
 
     # -- results
     def values(self):
@@ -2398,11 +2401,15 @@ def main():
     state = {}
 
     def on_cmdline(a, cmdline):
+        if "--version" in cmdline.get_arguments():
+            cmdline.do_print_literal(f"debrid-applet {VERSION}\n")
+            return 0
         opts = parse_cli(cmdline.get_arguments()[1:])
         first = "app" not in state
         if first:
             state["app"] = App(a)
             a.hold()  # keep running while the window is hidden
+            log_event("", f"Debrid Applet {VERSION} started")
         app = state["app"]
         if opts["toggle"]:
             app.toggle_window()

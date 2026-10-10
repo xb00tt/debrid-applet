@@ -1,0 +1,33 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GTK bindings and requests
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q python3-gi gir1.2-gtk-3.0 gir1.2-notify-0.7 gir1.2-xapp-1.0 python3-requests
+      - name: Run the offline test suite
+        run: python3 test_debrid_api.py
+      - name: Check the tag matches VERSION
+        run: |
+          V=$(python3 -c "import re;print(re.search(r'VERSION = \"([^\"]+)\"', open('debrid_applet.py').read()).group(1))")
+          test "v$V" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != VERSION $V"; exit 1; }
+      - name: Build .deb and tarball
+        run: |
+          packaging/build-deb.sh
+          git archive --format=tar.gz --prefix="debrid-applet-${GITHUB_REF_NAME#v}/" -o "dist/debrid-applet-${GITHUB_REF_NAME#v}.tar.gz" "${GITHUB_REF_NAME}"
+          ls -l dist
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* --title "Debrid Applet ${GITHUB_REF_NAME}" --generate-notes

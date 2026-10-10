@@ -10,14 +10,26 @@ All three services are exercised against their live APIs: account, add (magnet, 
 
 ## Install
 
+**From a release** (Linux Mint / Ubuntu / Debian): download the `.deb` from the
+[Releases page](https://github.com/xb00tt/debrid-applet/releases) and
+
+```bash
+sudo apt install ./debrid-applet_1.0.0_all.deb
+```
+
+This pulls in the dependencies, adds a menu entry and a system-wide autostart entry, and puts `debrid-applet`
+on your PATH. Upgrade by installing the newer `.deb`; remove with `sudo apt remove debrid-applet`.
+
+**From source**:
+
 ```bash
 ./install.sh
 ```
 
-Copies the applet to `~/.local/share/debrid-applet`, adds a menu entry and an autostart entry.
+Copies the applet to `~/.local/share/debrid-applet`, adds a menu entry and an autostart entry for your user.
 Start it right away with the command the installer prints. Needs `python3-gi`, `gir1.2-xapp-1.0`,
 `gir1.2-notify-0.7`, `python3-requests`; a media player (mpv, VLC, Celluloid, SMPlayer or Totem)
-is optional and enables **Play**.
+is optional and enables **Play**. `packaging/build-deb.sh` builds the `.deb` yourself.
 
 ## First run
 
@@ -183,7 +195,14 @@ The GTK side has no unit tests; it is checked by rendering a `ServiceTab` with s
 `Gtk.OffscreenWindow` and by driving the running applet with `xdotool` plus screenshots. Note that
 `xdotool type` mangles `[` on some keyboard layouts, so use bracket-free paths when scripting the file chooser.
 
+Releases: bump `VERSION` in `debrid_applet.py`, tag `vX.Y.Z` and push the tag; the release workflow runs the
+tests, builds the `.deb` and tarball and publishes them.
+
 Adding a service: one client class in `debrid_api.py` implementing `account`, `torrents`, `add_magnet`,
 `add_torrent_file`, `add_link`, `links`, `delete` (optionally `check_cached` and `control`), a key field in
 Settings, a line in `build_tabs()`, a default in `DEFAULT_HIDDEN` for columns it never reports.
 See `TODO.md` for what is not planned.
+
+## License
+
+MIT, see `LICENSE`.
