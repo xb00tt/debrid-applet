@@ -19,8 +19,8 @@ https://real-debrid.com/apitoken → Save. Keys live in `~/.config/debrid-applet
 ## Use
 
 - Left-click the tray icon to show/hide the popup (one tab per service); right-click for Refresh / Settings / Quit.
-- Paste a `magnet:` link or hoster URL, press Enter. Real-Debrid hoster links are unrestricted and the direct URL is copied to the clipboard; Torbox queues them as web downloads.
-- `.torrent` button uploads a file.
+- `+` opens a box for magnets and hoster links, one per line. Real-Debrid hoster links are unrestricted and the direct URLs are copied to the clipboard; Torbox queues them as web downloads.
+- Folder icon picks one or more `.torrent` files. Refresh and settings icons sit next to it.
 - Select a row: **Links ▾** lists files (click opens in browser, or copy all), **Copy first link**, **Delete**.
 - Polls every 30 s. Desktop notification when an item finishes.
 

@@ -385,6 +385,28 @@ def test_open_url_only_http():
     assert calls == [["xdg-open", "https://cdn.example/file.mkv"], ["xdg-open", "http://cdn.example/f"]]
 
 
+def test_add_one_routes_by_kind():
+    import debrid_applet
+
+    class Fake:
+        calls = []
+        def add_magnet(self, m): self.calls.append(("magnet", m))
+        def add_link(self, u): self.calls.append(("link", u)); return "https://cdn/x"
+        def add_torrent_file(self, p): self.calls.append(("file", p))
+    c = Fake()
+    assert debrid_applet.add_one(c, "MAGNET:?xt=urn:btih:abc") is None
+    assert debrid_applet.add_one(c, "https://host/f") == "https://cdn/x"
+    assert debrid_applet.add_one(c, "http://host/g") == "https://cdn/x"
+    assert debrid_applet.add_one(c, "/tmp/a.torrent") is None
+    assert c.calls == [("magnet", "MAGNET:?xt=urn:btih:abc"), ("link", "https://host/f"),
+                       ("link", "http://host/g"), ("file", "/tmp/a.torrent")]
+    try:
+        debrid_applet.add_one(c, "ftp://nope")
+        assert False
+    except ApiError as e:
+        assert "not a magnet" in str(e)
+
+
 def test_add_label():
     import debrid_applet
     assert debrid_applet.add_label("magnet:?xt=urn:btih:abc&dn=Some+Name+S01") == "Some Name S01"

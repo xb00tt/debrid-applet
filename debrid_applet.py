@@ -83,6 +83,28 @@ def open_url(url):
     return True
 
 
+def add_one(client, item):
+    """Route one magnet, http(s) link or .torrent path to the client. Returns a direct URL if given one."""
+    low = item.lower()
+    if low.startswith("magnet:"):
+        client.add_magnet(item)
+    elif low.startswith(("http://", "https://")):
+        return client.add_link(item)
+    elif low.endswith(".torrent"):
+        client.add_torrent_file(item)
+    else:
+        raise ApiError("not a magnet, link or .torrent")
+    return None
+
+
+def icon_button(icon, tip, cb):
+    btn = Gtk.Button.new_from_icon_name(icon, Gtk.IconSize.BUTTON)
+    btn.set_relief(Gtk.ReliefStyle.NONE)
+    btn.set_tooltip_text(tip)
+    btn.connect("clicked", cb)
+    return btn
+
+
 def notify(title, body):
     Notify.Notification.new(title, body, APP_ID).show()
 
@@ -100,22 +122,13 @@ class ServiceTab(Gtk.Box):
         self._is_busy = False
 
         self.account_label = Gtk.Label(xalign=0, label="Not configured" if client is None else "Loading…")
-        self.pack_start(self.account_label, False, False, 0)
 
-        row = Gtk.Box(spacing=6)
-        self.entry = Gtk.Entry(placeholder_text="magnet: or hoster link", hexpand=True)
-        self.entry.connect("activate", self.on_add)
-        add_btn = Gtk.Button(label="Add")
-        add_btn.connect("clicked", self.on_add)
-        self.chooser = Gtk.FileChooserButton(title="Add .torrent")
-        flt = Gtk.FileFilter()
-        flt.set_name("Torrent files")
-        flt.add_pattern("*.torrent")
-        self.chooser.add_filter(flt)
-        self.chooser.connect("file-set", self.on_torrent_file)
-        row.pack_start(self.entry, True, True, 0)
-        row.pack_start(add_btn, False, False, 0)
-        row.pack_start(self.chooser, False, False, 0)
+        row = Gtk.Box(spacing=2)
+        for icon, tip, cb in (("list-add-symbolic", "Add magnets / links", self.on_add),
+                              ("document-open-symbolic", "Add .torrent files", self.on_torrent_file),
+                              ("view-refresh-symbolic", "Refresh", app.refresh),
+                              ("emblem-system-symbolic", "Settings", app.open_settings)):
+            row.pack_start(icon_button(icon, tip, cb), False, False, 0)
         self.pack_start(row, False, False, 0)
 
         self.store = Gtk.ListStore(str, str, int, str, str, str)  # id, name, progress, state, size, kind
@@ -143,6 +156,7 @@ class ServiceTab(Gtk.Box):
 
         self.status = Gtk.Label(xalign=0)
         self.pack_start(self.status, False, False, 0)
+        self.pack_start(self.account_label, False, False, 0)
 
         self.view.get_selection().connect("changed", lambda _s: self._update_buttons())
         self._update_buttons()
@@ -208,32 +222,78 @@ class ServiceTab(Gtk.Box):
 
     # ----- actions -----
     def on_add(self, _w):
-        text = self.entry.get_text().strip()
-        if not text or self.client is None:
+        if self.client is None:
             return
-        label = add_label(text)
-        if text.lower().startswith("magnet:"):
-            self._run(lambda: self.client.add_magnet(text), lambda r, e: self._after_add(r, e, label))
-        else:
-            self._run(lambda: self.client.add_link(text), lambda r, e: self._after_add(r, e, label))
+        dlg = Gtk.Dialog(title=f"Add to {self.name}", transient_for=self.app.window, modal=True,
+                         default_width=560, default_height=320)
+        dlg.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Add", Gtk.ResponseType.OK)
+        dlg.set_default_response(Gtk.ResponseType.OK)
+        box = dlg.get_content_area()
+        box.set_spacing(6)
+        box.set_property("margin", 12)
+        hint = Gtk.Label(xalign=0, label="One per line:  magnet:?xt=urn:btih:…   https://…   http://…")
+        hint.get_style_context().add_class("dim-label")
+        view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR)
+        scroller = Gtk.ScrolledWindow(vexpand=True)
+        scroller.add(view)
+        box.pack_start(hint, False, False, 0)
+        box.pack_start(scroller, True, True, 0)
+        dlg.show_all()
+        view.grab_focus()
+        ok = dlg.run() == Gtk.ResponseType.OK
+        buf = view.get_buffer()
+        text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+        dlg.destroy()
+        if ok:
+            self.add_items([line.strip() for line in text.splitlines() if line.strip()])
 
-    def _after_add(self, result, error, label):
-        if error:
+    def on_torrent_file(self, _w):
+        if self.client is None:
             return
-        self.entry.set_text("")
-        if result:  # Real-Debrid returns the direct URL immediately
-            copy_text(result)
-            self.status.set_text("Link copied to clipboard")
-        if self.app.cfg["notify_added"]:
-            notify(f"{self.name}: added", label)
-        self.app.refresh()
+        dlg = Gtk.FileChooserNative.new("Add .torrent files", self.app.window,
+                                        Gtk.FileChooserAction.OPEN, "Add", "Cancel")
+        dlg.set_select_multiple(True)
+        flt = Gtk.FileFilter()
+        flt.set_name("Torrent files")
+        flt.add_pattern("*.torrent")
+        dlg.add_filter(flt)
+        paths = dlg.get_filenames() if dlg.run() == Gtk.ResponseType.ACCEPT else []
+        dlg.destroy()
+        self.add_items(paths)
 
-    def on_torrent_file(self, chooser):
-        path = chooser.get_filename()
-        chooser.unselect_all()
-        if path and self.client is not None:
-            label = add_label(path)
-            self._run(lambda: self.client.add_torrent_file(path), lambda r, e: self._after_add(r, e, label))
+    def add_items(self, items):
+        """Add magnets, links and .torrent paths sequentially in one worker; report counts in the status line."""
+        if not items or self.client is None:
+            return
+
+        def work():
+            added, urls, errors = [], [], []
+            for item in items:
+                try:
+                    url = add_one(self.client, item)
+                except ApiError as e:
+                    errors.append(f"{add_label(item)}: {e}")
+                    continue
+                added.append(add_label(item))
+                if url:
+                    urls.append(url)
+            return added, urls, errors
+
+        def done(res, err):
+            if err:
+                return
+            added, urls, errors = res
+            if urls:  # Real-Debrid hands back direct URLs right away
+                copy_text("\n".join(urls))
+            if self.app.cfg["notify_added"]:
+                for name in added:
+                    notify(f"{self.name}: added", name)
+            msg = f"Added {len(added)}" + (", direct link(s) copied" if urls else "")
+            if errors:
+                msg += " · failed: " + "; ".join(errors)
+            self.status.set_markup(red(msg) if errors else GLib.markup_escape_text(msg))
+            self.app.refresh()
+        self._run(work, done)
 
     def _fetch_links(self, cb):
         sel = self._selected()
@@ -309,16 +369,6 @@ class App:
         self.window = Gtk.Window(title="Debrid", default_width=640, default_height=480)
         self.window.connect("delete-event", lambda w, _e: w.hide() or True)
         self.notebook = Gtk.Notebook()
-        tools = Gtk.Box(spacing=2)  # icon buttons at the right end of the tab row
-        for icon, tip, cb in (("view-refresh-symbolic", "Refresh", self.refresh),
-                              ("emblem-system-symbolic", "Settings", self.open_settings)):
-            btn = Gtk.Button.new_from_icon_name(icon, Gtk.IconSize.BUTTON)
-            btn.set_relief(Gtk.ReliefStyle.NONE)
-            btn.set_tooltip_text(tip)
-            btn.connect("clicked", cb)
-            tools.pack_start(btn, False, False, 0)
-        tools.show_all()
-        self.notebook.set_action_widget(tools, Gtk.PackType.END)
         self.window.add(self.notebook)
         self.build_tabs()
 
