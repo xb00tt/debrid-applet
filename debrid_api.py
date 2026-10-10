@@ -169,7 +169,7 @@ class RealDebrid(_Client):
                 out.append({"name": f"Failed: {e}", "url": None})
                 break  # keep what we have; retrying immediately would only add more 429s
             try:
-                out.append({"name": u.get("filename") or link, "url": _direct_url(u)})
+                out.append({"name": u.get("filename") or link, "url": _direct_url(u), "size": int(u.get("filesize") or 0)})
             except ApiError as e:
                 out.append({"name": f"{u.get('filename') or link}: {e}", "url": None})
         return out
@@ -249,7 +249,7 @@ class Torbox(_Client):
         if len(files) > 1:  # one request for everything, before the per-file ones
             try:
                 zip_url = self._json("GET", dl_path, params={"token": self.token, id_key: int(tid), "zip_link": "true"})
-                out.append({"name": "All files (zip)", "url": zip_url})
+                out.append({"name": "All files (zip)", "url": zip_url, "size": int(item.get("size") or 0)})
             except ApiError as e:
                 out.append({"name": f"Zip failed: {e}", "url": None})
         for f in files:
@@ -258,7 +258,8 @@ class Torbox(_Client):
             except ApiError as e:
                 out.append({"name": f"Failed: {e}", "url": None})
                 break
-            out.append({"name": f.get("short_name") or f.get("name") or str(f["id"]), "url": url})
+            out.append({"name": f.get("short_name") or f.get("name") or str(f["id"]), "url": url,
+                        "size": int(f.get("size") or 0)})
         return out
 
     def add_link(self, url):

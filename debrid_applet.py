@@ -149,8 +149,19 @@ def text_button(icon, label, cb):
     return btn
 
 
-def notify(title, body):
-    Notify.Notification.new(title, body, APP_ID).show()
+_NOTES = []  # notifications with buttons must stay referenced until clicked or closed
+
+
+def notify(title, body, actions=()):
+    """Desktop notification; actions = [(label, callback)] become buttons."""
+    note = Notify.Notification.new(title, body, APP_ID)
+    for label, cb in actions:
+        note.add_action(label.lower().replace(" ", "-"), label, lambda _n, _a, *_, cb=cb: cb())
+    note.show()
+    if actions:
+        _NOTES.append(note)
+        del _NOTES[:-20]
+    return note
 
 
 def local_time(iso):
@@ -297,7 +308,7 @@ class ServiceTab(Gtk.Box):
                               ("emblem-system-symbolic", "Settings", app.open_settings)):
             row.pack_start(icon_button(icon, tip, cb), False, False, 0)
         self.play_btn = text_button("media-playback-start-symbolic", "Play", self.on_play)
-        self.links_btn = text_button("insert-link-symbolic", "Links ▾", self.on_links)
+        self.links_btn = text_button("view-list-symbolic", "Files", self.on_files)
         self.copy_btn = text_button("edit-copy-symbolic", "Copy links", self.on_copy_links)
         self.del_btn = text_button("user-trash-symbolic", "Delete", self.on_delete)
         for b in (self.del_btn, self.copy_btn, self.links_btn, self.play_btn):  # pack_end: last packed ends up leftmost
@@ -353,7 +364,7 @@ class ServiceTab(Gtk.Box):
         self.view.set_enable_search(False)  # the filter box does this job; typeahead would steal keys
         self.view.connect("query-tooltip", self.on_query_tooltip)
         self.view.connect("button-press-event", self.on_row_press)
-        self.view.connect("row-activated", lambda *_: self.on_play(None) if self.app.player else self.on_links(None))
+        self.view.connect("row-activated", lambda *_: self.on_play(None) if self.app.player else self.on_files(None))
         self.view.connect("columns-changed", self.on_columns_changed)
         self.store.connect("sort-column-changed", self.on_sort_changed)
         scroller = Gtk.ScrolledWindow(vexpand=True)
@@ -563,7 +574,8 @@ class ServiceTab(Gtk.Box):
         if prev is not None and self.app.cfg["notify_done"]:
             for t in torrents:
                 if t["done"] and t["id"] not in prev:
-                    notify(f"{self.name}: finished", t["name"])
+                    notify(f"{self.name}: finished", t["name"],
+                           [("Open files", lambda t=t: self.app.show_files(self, t))])
 
     def _fill(self):
         """Rebuild the list from the last poll, keeping rows whose name or state matches the filter box."""
@@ -743,7 +755,7 @@ class ServiceTab(Gtk.Box):
         n = len(self._targets())
         menu = Gtk.Menu()
         for label, cb, ok in (("Play", self.on_play, n == 1 and bool(self.app.player)),
-                              ("Links…", self.on_links, n == 1),
+                              ("Files…", self.on_files, n == 1),
                               ("Copy links", self.on_copy_links, n >= 1),
                               ("Copy magnet", self.on_copy_magnet, n >= 1),
                               (None, None, True),
@@ -790,35 +802,74 @@ class ServiceTab(Gtk.Box):
         self._run(lambda: self.client.links(t["id"], t["kind"]), pick)
 
     def play(self, url):
-        if not url.lower().startswith(("http://", "https://")):
+        if not self.app.player:
+            self.say("No media player found (mpv, vlc, celluloid, smplayer or totem)")
+            return
+        if not url or not url.lower().startswith(("http://", "https://")):
             return
         subprocess.Popen([self.app.player, url])
         self.say(f"Playing in {self.app.player}")
 
-    def on_links(self, btn):
+    def on_files(self, _w):
         targets = self._targets()
-        if len(targets) != 1:
-            return
-        t = targets[0]
+        if len(targets) == 1:
+            self.open_files_for(targets[0])
 
-        def show(links, err):
-            if err:
-                return
-            if not links:
-                self.say("No links yet (not finished?)")
-                return
-            menu = Gtk.Menu()
-            for link in links:
-                item = Gtk.MenuItem(label=link["name"][:80], sensitive=link["url"] is not None)
-                item.connect("activate", lambda _i, url=link["url"]: open_url(url))
-                menu.append(item)
-            menu.show_all()
-            if btn is not None:
-                menu.popup_at_widget(btn, Gdk.Gravity.SOUTH_WEST, Gdk.Gravity.NORTH_WEST, None)
-            else:
-                menu.popup_at_pointer(None)
-            self.say(f"{len(links)} link(s)")
-        self._run(lambda: self.client.links(t["id"], t["kind"]), show)
+    def open_files_for(self, t):
+        """Fetch the item's links, then show the file panel."""
+        self._run(lambda: self.client.links(t["id"], t["kind"]),
+                  lambda links, err: None if err else self._files_dialog(t, links))
+
+    def _files_dialog(self, t, links):
+        if not links:
+            self.say("No files yet (not finished?)")
+            return
+        dlg = Gtk.Dialog(title=f"Files · {t['name'][:70]}", transient_for=self.app.window,
+                         default_width=680, default_height=380)
+        box = dlg.get_content_area()
+        box.set_spacing(6)
+        box.set_property("margin", 8)
+        store = Gtk.ListStore(bool, str, str, str)  # checked, name, size, url
+        for link in links:
+            store.append([False, link["name"], human_size(link["size"]) if link.get("size") else "", link["url"] or ""])
+        view = Gtk.TreeView(model=store)
+        view.set_enable_search(False)
+        toggle = Gtk.CellRendererToggle()
+        toggle.connect("toggled", lambda _r, path: store.set_value(store.get_iter(path), 0, not store[path][0]))
+        view.append_column(Gtk.TreeViewColumn("", toggle, active=0))
+        name_col = Gtk.TreeViewColumn("Name", Gtk.CellRendererText(ellipsize=Pango.EllipsizeMode.MIDDLE), text=1)
+        name_col.set_expand(True)
+        view.append_column(name_col)
+        size_col = Gtk.TreeViewColumn("Size", Gtk.CellRendererText(xalign=1.0), text=2)
+        size_col.set_alignment(1.0)
+        view.append_column(size_col)
+        scroller = Gtk.ScrolledWindow(vexpand=True, shadow_type=Gtk.ShadowType.IN)
+        scroller.add(view)
+        box.pack_start(scroller, True, True, 0)
+
+        def chosen():
+            """Ticked rows, else the highlighted row, else everything; only entries that have a URL."""
+            rows = [r for r in store if r[0]]
+            if not rows:
+                _m, it = view.get_selection().get_selected()
+                rows = [store[it]] if it else list(store)
+            return [r[3] for r in rows if r[3]]
+
+        def copy():
+            urls = chosen()
+            copy_text("\n".join(urls))
+            self.say(f"Copied {len(urls)} link(s)")
+
+        actions = Gtk.Box(spacing=6)
+        for icon, label, cb in (("web-browser-symbolic", "Open in browser", lambda: [open_url(u) for u in chosen()]),
+                                ("media-playback-start-symbolic", "Play", lambda: chosen() and self.play(chosen()[0])),
+                                ("edit-copy-symbolic", "Copy links", copy)):
+            actions.pack_start(text_button(icon, label, lambda _b, cb=cb: cb()), False, False, 0)
+        box.pack_start(actions, False, False, 0)
+        dlg.add_button("Close", Gtk.ResponseType.CLOSE)
+        dlg.connect("response", lambda d, _r: d.destroy())
+        view.connect("row-activated", lambda v, path, _c: self.play(store[path][3]) if self.app.player else open_url(store[path][3]))
+        dlg.show_all()
 
     def on_copy_links(self, _btn):
         targets = self._targets()
@@ -915,7 +966,6 @@ class App:
         self.clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
         self.clipboard.connect("owner-change", lambda clip, _e: self.cfg.get("watch_clipboard") and clip.request_text(self.on_clipboard_text))
         self._last_clip = None
-        self._clip_note = None
         self.notebook = Gtk.Notebook()
         self.window.add(self.notebook)
         self.build_tabs()
@@ -968,11 +1018,14 @@ class App:
         tabs = [t for t in self.tabs if t.client is not None]
         if not tabs:
             return
-        note = Notify.Notification.new("Magnet copied", add_label(text), APP_ID)
-        for t in tabs:
-            note.add_action(t.name, f"Add to {t.name}", lambda _n, _a, *_, tab=t: tab.add_items([text]))
-        note.show()
-        self._clip_note = note  # keep it alive for the action callbacks
+        notify("Magnet copied", add_label(text), [(f"Add to {t.name}", lambda t=t: t.add_items([text])) for t in tabs])
+
+    def show_files(self, tab, t):
+        """From a notification: raise the window on that tab and open the item's file panel."""
+        self.window.show_all()
+        self.window.present()
+        self.notebook.set_current_page(self.tabs.index(tab))
+        tab.open_files_for(t)
 
     def hide_window(self):
         self.cfg["window"] = list(self.window.get_size())
@@ -1050,7 +1103,8 @@ class App:
 
     def open_settings(self, *_):
         dlg = Gtk.Dialog(title="Debrid settings", transient_for=self.window, modal=True)
-        dlg.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Save", Gtk.ResponseType.OK)
+        TEST = 1
+        dlg.add_buttons("Test keys", TEST, "Cancel", Gtk.ResponseType.CANCEL, "Save", Gtk.ResponseType.OK)
         grid = Gtk.Grid(row_spacing=6, column_spacing=6, margin=12)
         entries = {}
         for i, (key, label) in enumerate((("torbox_key", "Torbox API key"),
@@ -1066,9 +1120,40 @@ class App:
             check = Gtk.CheckButton(label=label, active=bool(self.cfg[key]))
             grid.attach(check, 0, i, 2, 1)
             checks[key] = check
+        result = Gtk.Label(xalign=0, wrap=True)
+        grid.attach(result, 0, 5, 2, 1)
         dlg.get_content_area().add(grid)
         dlg.show_all()
-        if dlg.run() == Gtk.ResponseType.OK:
+
+        def test_keys():
+            clients = [(cls, entries[key].get_text().strip())
+                       for cls, key in ((Torbox, "torbox_key"), (RealDebrid, "realdebrid_key"))]
+
+            def work():
+                parts = []
+                for cls, token in clients:
+                    if not token:
+                        continue
+                    try:
+                        a = cls(token).account()
+                        parts.append((cls.name, f"{a['plan']}, expires {a['expires'] or '—'}", False))
+                    except ApiError as e:
+                        parts.append((cls.name, str(e), True))
+                return parts
+
+            def show(parts, err):
+                if err:
+                    result.set_markup(red(err))
+                    return
+                result.set_markup("\n".join(
+                    (red(f"{n}: {m}") if bad else f"{GLib.markup_escape_text(n)}: {GLib.markup_escape_text(m)}")
+                    for n, m, bad in parts) or "No keys entered")
+            result.set_text("Testing…")
+            run_async(work, show)
+
+        while (resp := dlg.run()) == TEST:
+            test_keys()
+        if resp == Gtk.ResponseType.OK:
             self.cfg = {**{k: e.get_text().strip() for k, e in entries.items()},
                         **{k: c.get_active() for k, c in checks.items()}}
             save_config(self.cfg)

@@ -105,11 +105,12 @@ def test_rd_delete():
 def test_rd_links_unrestricts_each():
     s = FakeSession(
         FakeResp(200, {"id": "A", "links": ["https://real-debrid.com/d/1", "https://real-debrid.com/d/2"]}),
-        FakeResp(200, {"filename": "one.mkv", "download": "https://cdn/one"}),
+        FakeResp(200, {"filename": "one.mkv", "download": "https://cdn/one", "filesize": 1000}),
         FakeResp(200, {"filename": "two.mkv", "download": "https://cdn/two"}),
     )
     out = RealDebrid("t", s).links("A")
-    assert out == [{"name": "one.mkv", "url": "https://cdn/one"}, {"name": "two.mkv", "url": "https://cdn/two"}]
+    assert out == [{"name": "one.mkv", "url": "https://cdn/one", "size": 1000},
+                   {"name": "two.mkv", "url": "https://cdn/two", "size": 0}]
     assert s.calls[0][:2] == ("GET", RD + "/torrents/info/A")
     assert s.calls[1][:2] == ("POST", RD + "/unrestrict/link")
     assert s.calls[1][2]["data"] == {"link": "https://real-debrid.com/d/1"}
@@ -165,7 +166,7 @@ def test_links_partial_on_rate_limit():
         FakeResp(429, {}),
     )
     out = RealDebrid("t", s).links("A")
-    assert out[0] == {"name": "one.mkv", "url": "https://cdn/one"}
+    assert out[0] == {"name": "one.mkv", "url": "https://cdn/one", "size": 0}
     assert out[1]["url"] is None and "Rate limited" in out[1]["name"]
     assert len(out) == 2 and len(s.calls) == 3
 
@@ -281,14 +282,15 @@ def test_tb_delete_routes_on_kind():
 
 def test_tb_links_zip_then_per_file():
     s = FakeSession(
-        ok({"id": 7, "files": [{"id": 0, "name": "dir/a.mkv", "short_name": "a.mkv"}, {"id": 1, "name": "b.srt"}]}),
+        ok({"id": 7, "size": 1500, "files": [{"id": 0, "name": "dir/a.mkv", "short_name": "a.mkv", "size": 1400},
+                                             {"id": 1, "name": "b.srt", "size": 100}]}),
         ok("https://cdn/zip"),
         ok("https://cdn/a"),
         ok("https://cdn/b"),
     )
     out = Torbox("tok", s).links("7", "torrent")
-    assert out == [{"name": "All files (zip)", "url": "https://cdn/zip"},
-                   {"name": "a.mkv", "url": "https://cdn/a"}, {"name": "b.srt", "url": "https://cdn/b"}]
+    assert out == [{"name": "All files (zip)", "url": "https://cdn/zip", "size": 1500},
+                   {"name": "a.mkv", "url": "https://cdn/a", "size": 1400}, {"name": "b.srt", "url": "https://cdn/b", "size": 100}]
     assert s.calls[0][:2] == ("GET", TB + "/torrents/mylist")
     assert s.calls[0][2]["params"] == {"id": 7, "bypass_cache": "true"}
     assert s.calls[1][:2] == ("GET", TB + "/torrents/requestdl")
@@ -322,12 +324,12 @@ def test_rd_unrestrict_alternative():
                     FakeResp(200, {"filename": "two", "download": "https://cdn/two"}))
     out = RealDebrid("t", s).links("A")
     assert out[0]["url"] is None and "No direct link" in out[0]["name"]
-    assert out[1] == {"name": "two", "url": "https://cdn/two"}
+    assert out[1] == {"name": "two", "url": "https://cdn/two", "size": 0}
 
 
 def test_tb_links_webdl():
     s = FakeSession(ok({"id": 3, "files": [{"id": 0, "name": "w.bin"}]}), ok("https://cdn/w"))
-    assert Torbox("tok", s).links("3", "webdl") == [{"name": "w.bin", "url": "https://cdn/w"}]
+    assert Torbox("tok", s).links("3", "webdl") == [{"name": "w.bin", "url": "https://cdn/w", "size": 0}]
     assert s.calls[0][1] == TB + "/webdl/mylist"
     assert s.calls[1][1] == TB + "/webdl/requestdl"
     assert s.calls[1][2]["params"] == {"token": "tok", "web_id": 3, "file_id": 0}

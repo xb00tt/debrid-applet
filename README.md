@@ -21,13 +21,14 @@ https://real-debrid.com/apitoken → Save. Keys live in `~/.config/debrid-applet
 - Left-click the tray icon to show/hide the popup (one tab per service); right-click for Refresh / Settings / Quit.
 - `+` opens a box for magnets and hoster links, one per line. On the Torbox tab each magnet is marked cached / not cached as you type. Real-Debrid hoster links are unrestricted and the direct URLs are copied to the clipboard; Torbox queues them as web downloads.
 - Folder icon picks one or more `.torrent` files. Dropping `.torrent` files, links or magnets onto a tab adds them too. Refresh and settings icons sit next to it.
-- Tick rows (or just highlight one): **Links ▾** lists files of one item (click opens in browser), **Copy links** copies every direct URL of the ticked items, **Delete** removes them (asks when more than one).
-- **Play** streams the item's video in mpv / VLC / Celluloid (whichever is installed); double-click a row does the same. Right-click a row for Play, Links, Copy links, Copy magnet, Delete.
+- Tick rows (or just highlight one): **Files** opens a panel listing the item's files with sizes: tick some, then Open in browser / Play / Copy links, **Copy links** copies every direct URL of the ticked items, **Delete** removes them (asks when more than one).
+- **Play** streams the item's video in mpv / VLC / Celluloid (whichever is installed); double-click a row does the same. Right-click a row for Play, Files, Copy links, Copy magnet, Delete.
 - Shift-click a checkbox to tick a range. Hover the status line for recent errors.
 - Keys: `Delete`, `Ctrl+A` tick all, `Ctrl+C` copy links, `Ctrl+F` filter, `Ctrl+R` refresh, `Esc` hide.
 - Copy a magnet link anywhere and a notification offers "Add to Torbox / Real-Debrid" (toggle in Settings).
 - Click a header to sort, drag headers to reorder, right-click a header to show/hide columns. Layout is remembered per service.
 - Only one instance runs; launching again raises the window.
+- The "finished" notification has an **Open files** button. Settings has **Test keys**.
 - Polls every 8 s while something is downloading, every 60 s when idle. Desktop notification when an item finishes.
 
 ## Dev
