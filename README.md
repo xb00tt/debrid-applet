@@ -67,13 +67,24 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 
 `Delete` · `Ctrl+A` tick all / none · `Ctrl+C` copy links · `Ctrl+F` filter · `Ctrl+R` refresh · `Esc` clear filter, then hide window
 
+## Settings
+
+Right-click the tray icon → **Settings…**, or the gear in the toolbar.
+
+- Torbox and Real-Debrid API keys, with **Test keys** to check them live.
+- Notify when a torrent is added · Notify when a download finishes on the service (the "finished"
+  notification carries an **Open files** button).
+- Watch clipboard for magnet links.
+- Remember the state filter between runs.
+
+All four toggles are on by default.
+
 ## Behind the scenes
 
 - Polls every 8 s while something is downloading, every 60 s when idle. Hover the tray icon to see the current interval.
-- Notifications when an item is added and when it finishes on the service (both toggles in Settings).
-  The "finished" one carries an **Open files** button.
 - Red text in the status line is the service's own error message; hover the status line for the last few.
-- Window size, column layout and sort order persist across restarts.
+- Window size, column layout, sort order and state filter persist across restarts, per service.
+- Config lives in `~/.config/debrid-applet/config.json`; delete it to start over.
 
 ## Dev
 
