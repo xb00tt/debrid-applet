@@ -2,7 +2,7 @@
 import json
 import requests
 
-from debrid_api import ApiError, RealDebrid, Torbox, human_size
+from debrid_api import ApiError, RealDebrid, Torbox, human_size, magnet_hash
 
 RD = "https://api.real-debrid.com/rest/1.0"
 TB = "https://api.torbox.app/v1/api"
@@ -343,6 +343,28 @@ def test_tb_add_link():
     assert Torbox("t", s).add_link("https://hoster/x") is None
     assert s.calls[0][:2] == ("POST", TB + "/webdl/createwebdownload")
     assert s.calls[0][2]["data"] == {"link": "https://hoster/x"}
+
+
+def test_magnet_hash():
+    hex40 = "0123456789abcdef0123456789abcdef01234567"
+    assert magnet_hash(f"magnet:?xt=urn:btih:{hex40.upper()}&dn=x") == hex40
+    assert magnet_hash(f"magnet:?dn=x&xt=urn:btih:{hex40}") == hex40
+    import base64
+    b32 = base64.b32encode(bytes.fromhex(hex40)).decode()
+    assert magnet_hash(f"magnet:?xt=urn:btih:{b32}") == hex40
+    assert magnet_hash("magnet:?dn=nohash") == "" and magnet_hash("https://x") == "" and magnet_hash("") == ""
+
+
+def test_tb_check_cached():
+    a, b, c = "a" * 40, "b" * 40, "c" * 40
+    s = FakeSession(ok({a.upper(): {"name": "A", "size": 1}, c: {"name": "C"}}))
+    assert Torbox("t", s).check_cached([a, b, c]) == {a, c}
+    assert s.calls[0][:2] == ("GET", TB + "/torrents/checkcached")
+    assert s.calls[0][2]["params"] == {"hash": f"{a},{b},{c}", "format": "object", "list_files": "false"}
+    assert Torbox("t", FakeSession(ok([{"hash": b}]))).check_cached([a, b]) == {b}
+    assert Torbox("t", FakeSession(ok(None))).check_cached([a]) == set()
+    empty = FakeSession()
+    assert Torbox("t", empty).check_cached([]) == set() and empty.calls == []
 
 
 def test_tb_success_false_raises_detail():

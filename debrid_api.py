@@ -1,5 +1,7 @@
 """Thin clients for Real-Debrid and Torbox. No GTK here; safe to import anywhere."""
+import base64
 import os
+import re
 
 import requests
 
@@ -11,6 +13,20 @@ TORBOX_AUTH_ERRORS = ("NO_AUTH", "BAD_TOKEN", "AUTH_ERROR")
 
 class ApiError(Exception):
     """User-facing error message from a service call."""
+
+
+_MAGNET_HASH = re.compile(r"xt=urn:btih:([0-9a-fA-F]{40}|[A-Za-z2-7]{32})")
+
+
+def magnet_hash(magnet):
+    """Info hash of a magnet link as lowercase hex, '' if absent. Base32 hashes are converted."""
+    m = _MAGNET_HASH.search(magnet or "")
+    if not m:
+        return ""
+    h = m.group(1)
+    if len(h) == 32:
+        h = base64.b32decode(h.upper()).hex()
+    return h.lower()
 
 
 def human_size(n):
@@ -248,3 +264,18 @@ class Torbox(_Client):
     def add_link(self, url):
         self._json("POST", "/webdl/createwebdownload", data={"link": url})
         return None
+
+    def check_cached(self, hashes):
+        """Subset of the given info hashes (lowercase hex) that Torbox already holds. No request when empty."""
+        hashes = [h.lower() for h in hashes if h]
+        if not hashes:
+            return set()
+        data = self._json("GET", "/torrents/checkcached",
+                          params={"hash": ",".join(hashes), "format": "object", "list_files": "false"})
+        if isinstance(data, dict):
+            found = {k.lower() for k in data}
+        elif isinstance(data, list):
+            found = {str(i.get("hash", "")).lower() for i in data if isinstance(i, dict)}
+        else:
+            found = set()
+        return {h for h in hashes if h in found}

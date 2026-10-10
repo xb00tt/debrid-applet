@@ -21,7 +21,7 @@ from gi.repository import Gdk, Gio, GLib, Gtk, Notify, Pango, XApp  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from debrid_api import ApiError, RealDebrid, Torbox, human_size  # noqa: E402
+from debrid_api import ApiError, RealDebrid, Torbox, human_size, magnet_hash  # noqa: E402
 
 APP_ID = "debrid-applet"  # WM_CLASS, icon name and .desktop basename all match
 DBUS_ID = "io.github.xb00tt.DebridApplet"  # single-instance guard
@@ -548,18 +548,65 @@ class ServiceTab(Gtk.Box):
         hint.get_style_context().add_class("dim-label")
         view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, left_margin=8, right_margin=8,
                             top_margin=6, bottom_margin=6)
+        buf = view.get_buffer()
         scroller = Gtk.ScrolledWindow(vexpand=True, shadow_type=Gtk.ShadowType.IN)
         scroller.add(view)
+        result = Gtk.Label(xalign=0, wrap=True)
         box.pack_start(hint, False, False, 0)
         box.pack_start(scroller, True, True, 0)
+        box.pack_start(result, False, False, 0)
+        if hasattr(self.client, "check_cached"):
+            self._live_cache_check(buf, result)
         dlg.show_all()
         view.grab_focus()
         ok = dlg.run() == Gtk.ResponseType.OK
-        buf = view.get_buffer()
         text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
         dlg.destroy()
         if ok:
             self.add_items([line.strip() for line in text.splitlines() if line.strip()])
+
+    def _live_cache_check(self, buf, result):
+        """While the Add box is open: 500 ms after the last edit, ask the service which magnets are cached."""
+        state = {"timer": 0, "alive": True}
+        result.connect("destroy", lambda _w: state.update(alive=False))
+
+        def text_lines():
+            text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+            return [line.strip() for line in text.splitlines() if line.strip()]
+
+        def show(magnets, cached, err):
+            if not state["alive"]:
+                return
+            if err:
+                result.set_markup(red(f"Cache check failed: {err}"))
+                return
+            parts = []
+            for line, h in magnets:
+                name = GLib.markup_escape_text(add_label(line)[:60])
+                if not h:
+                    parts.append(f"<span foreground='{PALETTE['warn']}'>? no hash</span>  {name}")
+                elif h in cached:
+                    parts.append(f"<span foreground='{PALETTE['done']}'>✓ cached</span>  {name}")
+                else:
+                    parts.append(f"<span foreground='{PALETTE['error']}'>✗ not cached</span>  {name}")
+            result.set_markup("\n".join(parts))
+
+        def check():
+            state["timer"] = 0
+            magnets = [(l, magnet_hash(l)) for l in text_lines() if l.lower().startswith("magnet:")]
+            if not magnets or not state["alive"]:
+                result.set_text("")
+                return False
+            result.set_text("Checking cache…")
+            hashes = [h for _, h in magnets if h]
+            run_async(lambda: self.client.check_cached(hashes), lambda cached, err: show(magnets, cached or set(), err))
+            return False
+
+        def schedule(_buf):
+            if state["timer"]:
+                GLib.source_remove(state["timer"])
+            state["timer"] = GLib.timeout_add(500, check)
+        buf.connect("changed", schedule)
 
     def on_torrent_file(self, _w):
         if self.client is None:
