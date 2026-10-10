@@ -497,6 +497,14 @@ def test_video_links_and_magnet():
     assert debrid_applet.magnet_for("", "x") == ""
 
 
+def test_drop_items():
+    import debrid_applet
+    uris = ["file:///tmp/a%20b.torrent", "https://host/x", "file://nowhere:%%bad"]
+    assert debrid_applet.drop_items(uris, "ignored") == ["/tmp/a b.torrent", "https://host/x"]
+    assert debrid_applet.drop_items([], " magnet:?xt=a \n\nhttps://y\n") == ["magnet:?xt=a", "https://y"]
+    assert debrid_applet.drop_items([], None) == []
+
+
 def test_add_label():
     import debrid_applet
     assert debrid_applet.add_label("magnet:?xt=urn:btih:abc&dn=Some+Name+S01") == "Some Name S01"

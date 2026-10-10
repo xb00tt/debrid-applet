@@ -117,6 +117,22 @@ def magnet_for(hash_, name):
     return f"magnet:?xt=urn:btih:{hash_}&dn={quote(name)}" if hash_ else ""
 
 
+def drop_items(uris, text):
+    """Items from a drag-and-drop: file URIs become paths, other URIs stay, otherwise one item per text line."""
+    if uris:
+        out = []
+        for u in uris:
+            if u.startswith("file:"):
+                try:
+                    out.append(GLib.filename_from_uri(u)[0])
+                except GLib.Error:
+                    pass
+            else:
+                out.append(u)
+        return out
+    return [line.strip() for line in (text or "").splitlines() if line.strip()]
+
+
 def icon_button(icon, tip, cb):
     btn = Gtk.Button.new_from_icon_name(icon, Gtk.IconSize.BUTTON)
     btn.set_relief(Gtk.ReliefStyle.NONE)
@@ -334,6 +350,13 @@ class ServiceTab(Gtk.Box):
 
         self.view.get_selection().connect("changed", lambda _s: self._update_buttons())
         self._update_buttons()
+
+        # Drop .torrent files, links or magnets anywhere on the tab.
+        self.drag_dest_set(Gtk.DestDefaults.ALL, [], Gdk.DragAction.COPY)
+        self.drag_dest_add_uri_targets()
+        self.drag_dest_add_text_targets()
+        self.connect("drag-data-received",
+                     lambda _w, _c, _x, _y, data, _i, _t: self.add_items(drop_items(data.get_uris(), data.get_text())))
 
     # ----- column layout (shared by both tabs through the config) -----
     def apply_columns(self):

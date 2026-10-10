@@ -2,7 +2,6 @@
 
 Ideas from the UX review, not yet built.
 
-- Drag and drop of `.torrent` files and magnet/URL text onto the window.
 - Adaptive polling: 5–10 s while something downloads, 60 s when idle.
 - Per-tab column layout, or auto-hide columns with no data (Real-Debrid has no Up / Peers / Ratio).
 - Shift-click range ticking on the checkbox column.
