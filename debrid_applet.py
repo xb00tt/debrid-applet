@@ -10,6 +10,7 @@ import time
 import gi
 
 gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
 gi.require_version("Pango", "1.0")
 gi.require_version("Notify", "0.7")
 gi.require_version("AyatanaAppIndicator3", "0.1")
@@ -180,22 +181,76 @@ class ServiceTab(Gtk.Box):
                 if t["done"] and t["id"] not in prev:
                     Notify.Notification.new(f"{self.name}: finished", t["name"], "folder-download").show()
 
-    # ----- actions (Task 4) -----
+    # ----- actions -----
     def on_add(self, _w):
-        pass
+        text = self.entry.get_text().strip()
+        if not text or self.client is None:
+            return
+        if text.lower().startswith("magnet:"):
+            self._run(lambda: self.client.add_magnet(text), self._after_add)
+        else:
+            self._run(lambda: self.client.add_link(text), self._after_add)
 
-    def on_torrent_file(self, _chooser):
-        pass
+    def _after_add(self, result, error):
+        if error:
+            return
+        self.entry.set_text("")
+        if result:  # Real-Debrid returns the direct URL immediately
+            copy_text(result)
+            self.status.set_text("Link copied to clipboard")
+        self.app.refresh()
 
-    def on_links(self, _btn):
-        pass
+    def on_torrent_file(self, chooser):
+        path = chooser.get_filename()
+        chooser.unselect_all()
+        if path and self.client is not None:
+            self._run(lambda: self.client.add_torrent_file(path),
+                      lambda _r, err: None if err else self.app.refresh())
+
+    def _fetch_links(self, cb):
+        sel = self._selected()
+        if sel is None:
+            return
+        self._run(lambda: self.client.links(sel["id"], sel["kind"]), cb)
+
+    def on_links(self, btn):
+        def show(links, err):
+            if err:
+                return
+            if not links:
+                self.status.set_text("No links yet (not finished?)")
+                return
+            menu = Gtk.Menu()
+            for link in links:
+                item = Gtk.MenuItem(label=link["name"][:80])
+                item.connect("activate", lambda _i, url=link["url"]: subprocess.Popen(["xdg-open", url]))
+                menu.append(item)
+            menu.append(Gtk.SeparatorMenuItem())
+            copy_all = Gtk.MenuItem(label="Copy all links")
+            copy_all.connect("activate", lambda _i: copy_text("\n".join(l["url"] for l in links)))
+            menu.append(copy_all)
+            menu.show_all()
+            menu.popup_at_widget(btn, Gdk.Gravity.SOUTH_WEST, Gdk.Gravity.NORTH_WEST, None)
+            self.status.set_text(f"{len(links)} link(s)")
+        self._fetch_links(show)
 
     def on_copy_first(self, _btn):
-        pass
+        def copy(links, err):
+            if err:
+                return
+            if links:
+                copy_text(links[0]["url"])
+                self.status.set_text("Link copied to clipboard")
+            else:
+                self.status.set_text("No links yet (not finished?)")
+        self._fetch_links(copy)
 
     def on_delete(self, _btn):
-        pass
-
+        sel = self._selected()
+        if sel is None:
+            return
+        self._run(lambda: self.client.delete(sel["id"], sel["kind"]),
+                  lambda _r, err: None if err else self.app.refresh())
 
 class App:
     def __init__(self):
