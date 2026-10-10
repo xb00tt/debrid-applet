@@ -107,6 +107,13 @@ def icon_button(icon, tip, cb):
     return btn
 
 
+def text_button(icon, label, cb):
+    btn = Gtk.Button(label=label, image=Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.BUTTON),
+                     always_show_image=True)
+    btn.connect("clicked", cb)
+    return btn
+
+
 def notify(title, body):
     Notify.Notification.new(title, body, APP_ID).show()
 
@@ -200,6 +207,11 @@ class ServiceTab(Gtk.Box):
                               ("view-refresh-symbolic", "Refresh", app.refresh),
                               ("emblem-system-symbolic", "Settings", app.open_settings)):
             row.pack_start(icon_button(icon, tip, cb), False, False, 0)
+        self.links_btn = text_button("insert-link-symbolic", "Links ▾", self.on_links)
+        self.copy_btn = text_button("edit-copy-symbolic", "Copy links", self.on_copy_links)
+        self.del_btn = text_button("user-trash-symbolic", "Delete", self.on_delete)
+        for b in (self.del_btn, self.copy_btn, self.links_btn):  # pack_end: last packed ends up leftmost
+            row.pack_end(b, False, False, 0)
         self.pack_start(row, False, False, 0)
 
         self.store = Gtk.ListStore(*STORE_TYPES)
@@ -240,17 +252,6 @@ class ServiceTab(Gtk.Box):
         scroller = Gtk.ScrolledWindow(vexpand=True)
         scroller.add(self.view)
         self.pack_start(scroller, True, True, 0)
-
-        actions = Gtk.Box(spacing=6)
-        self.links_btn = Gtk.Button(label="Links ▾")
-        self.links_btn.connect("clicked", self.on_links)
-        self.copy_btn = Gtk.Button(label="Copy links")
-        self.copy_btn.connect("clicked", self.on_copy_links)
-        self.del_btn = Gtk.Button(label="Delete")
-        self.del_btn.connect("clicked", self.on_delete)
-        for b in (self.links_btn, self.copy_btn, self.del_btn):
-            actions.pack_start(b, False, False, 0)
-        self.pack_start(actions, False, False, 0)
 
         self.status = Gtk.Label(xalign=0)
         self.pack_start(self.status, False, False, 0)
