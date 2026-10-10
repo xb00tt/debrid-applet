@@ -543,7 +543,7 @@ class ServiceTab(Gtk.Box):
         self.store.clear()
         now = time.monotonic()
         self._pending = [(exp, row) for exp, row in self._pending if now < exp]
-        for t in self.torrents + [row for _exp, row in self._pending]:
+        for t in [row for _exp, row in self._pending] + self.torrents:  # placeholders first
             if q and q not in t["name"].lower() and q not in t["state"].lower():
                 continue
             if kind != "all" and state_kind(t["state"]) != kind:
@@ -690,6 +690,10 @@ class ServiceTab(Gtk.Box):
                     "size": 0, "seeds": 0, "speed": 0, "kind": "torrent", "up_speed": None, "peers": None,
                     "ratio": None, "added": datetime.now(timezone.utc).isoformat(), "finished": "", "hash": ""}))
             self._fill()
+            for row in self.store:  # bring the first placeholder into view
+                if row[0].startswith("pending:"):
+                    self.view.scroll_to_cell(row.path, None, True, 0.0, 0.0)
+                    break
             self.app.refresh()
             GLib.timeout_add_seconds(3, lambda: self.app.refresh() and False)  # services list new items with a lag
         self._run(work, done)
