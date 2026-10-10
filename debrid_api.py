@@ -233,7 +233,7 @@ class Torbox(_Client):
             self._json("POST", "/torrents/createtorrent", files={"file": (os.path.basename(path), f, "application/x-bittorrent")})
 
     def control(self, tid, op, kind="torrent"):
-        """op: pause, resume, reannounce or delete."""
+        """op: resume, stop_seeding, reannounce or delete (Torbox has no pause)."""
         if kind == "webdl":
             self._json("POST", "/webdl/controlwebdownload", json={"webdl_id": int(tid), "operation": op})
         else:

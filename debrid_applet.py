@@ -768,7 +768,7 @@ class ServiceTab(Gtk.Box):
                    ("Copy as aria2c command", self.on_copy_aria2, n >= 1)]
         if hasattr(self.client, "control"):
             entries += [(None, None, True)] + [(label, lambda _w, op=op: self.on_control(op), n >= 1)
-                                               for label, op in (("Pause", "pause"), ("Resume", "resume"),
+                                               for label, op in (("Resume", "resume"), ("Stop seeding", "stop_seeding"),
                                                                  ("Reannounce", "reannounce"))]
         entries += [(None, None, True), ("Delete", self.on_delete, n >= 1)]
         menu = Gtk.Menu()
@@ -879,7 +879,7 @@ class ServiceTab(Gtk.Box):
             copy_text(aria2_command(urls, os.path.expanduser("~/Downloads")))
             self.say(f"aria2c command for {len(urls)} file(s) copied")
 
-        for icon, label, cb in (("web-browser-symbolic", "Open in browser", lambda: [open_url(u) for u in chosen()]),
+        for icon, label, cb in (("web-browser-symbolic", "Download via browser", lambda: [open_url(u) for u in chosen()]),
                                 ("media-playback-start-symbolic", "Play", lambda: chosen() and self.play(chosen()[0])),
                                 ("edit-copy-symbolic", "Copy links", copy),
                                 ("utilities-terminal-symbolic", "aria2c command", copy_aria2)):
@@ -944,7 +944,7 @@ class ServiceTab(Gtk.Box):
         def done(errors, err):
             if err:
                 return
-            self.say(f"{op.capitalize()}: {len(targets) - len(errors)} ok" + (" · " + "; ".join(errors) if errors else ""),
+            self.say(f"{op.replace('_', ' ').capitalize()}: {len(targets) - len(errors)} ok" + (" · " + "; ".join(errors) if errors else ""),
                      error=bool(errors))
             self.app.refresh()
         self._run(work, done)
