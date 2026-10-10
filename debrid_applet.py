@@ -239,12 +239,12 @@ class ServiceTab(Gtk.Box):
                 return
             menu = Gtk.Menu()
             for link in links:
-                item = Gtk.MenuItem(label=link["name"][:80])
+                item = Gtk.MenuItem(label=link["name"][:80], sensitive=link["url"] is not None)
                 item.connect("activate", lambda _i, url=link["url"]: subprocess.Popen(["xdg-open", url]))
                 menu.append(item)
             menu.append(Gtk.SeparatorMenuItem())
             copy_all = Gtk.MenuItem(label="Copy all links")
-            copy_all.connect("activate", lambda _i: copy_text("\n".join(l["url"] for l in links)))
+            copy_all.connect("activate", lambda _i: copy_text("\n".join(l["url"] for l in links if l["url"])))
             menu.append(copy_all)
             menu.show_all()
             menu.popup_at_widget(btn, Gdk.Gravity.SOUTH_WEST, Gdk.Gravity.NORTH_WEST, None)
@@ -255,8 +255,9 @@ class ServiceTab(Gtk.Box):
         def copy(links, err):
             if err:
                 return
-            if links:
-                copy_text(links[0]["url"])
+            urls = [l["url"] for l in links if l["url"]]
+            if urls:
+                copy_text(urls[0])
                 self.status.set_text("Link copied to clipboard")
             else:
                 self.status.set_text("No links yet (not finished?)")

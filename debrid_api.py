@@ -5,6 +5,8 @@ import requests
 
 TIMEOUT = 15
 USER_AGENT = "debrid-applet"
+INVALID_KEY = "Invalid API key"
+TORBOX_AUTH_ERRORS = ("NO_AUTH", "BAD_TOKEN", "AUTH_ERROR")
 
 
 class ApiError(Exception):
@@ -36,8 +38,14 @@ class _Client:
             r = self.s.request(method, self.BASE + path, timeout=TIMEOUT, **kw)
         except requests.RequestException as e:
             raise ApiError(f"Network error: {e}") from e
-        if r.status_code in (401, 403):
-            raise ApiError("Invalid API key")
+        if r.status_code == 401:
+            raise ApiError(INVALID_KEY)
+        if r.status_code == 403:
+            # Torbox uses 403 for bad tokens; Real-Debrid uses it for permission errors with a message.
+            body = _json_or_none(r)
+            if body is None or body.get("error") in TORBOX_AUTH_ERRORS:
+                raise ApiError(INVALID_KEY)
+            raise ApiError(_error_message(r))
         if r.status_code == 429:
             raise ApiError("Rate limited, retrying next tick")
         if r.status_code >= 400:
@@ -45,16 +53,19 @@ class _Client:
         return r
 
 
-def _error_message(r):
-    """Prefer the service's own message (Torbox 'detail', Real-Debrid 'error') over raw body."""
+def _json_or_none(r):
     try:
         body = r.json()
-        msg = body.get("detail") or body.get("error")
-        if msg:
-            return str(msg)
-    except (ValueError, AttributeError):
-        pass
-    return f"HTTP {r.status_code}: {r.text[:200]}"
+    except ValueError:
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def _error_message(r):
+    """Prefer the service's own message (Torbox 'detail', Real-Debrid 'error') over raw body."""
+    body = _json_or_none(r) or {}
+    msg = body.get("detail") or body.get("error")
+    return str(msg) if msg else f"HTTP {r.status_code}: {r.text[:200]}"
 
 
 class RealDebrid(_Client):
@@ -76,13 +87,17 @@ class RealDebrid(_Client):
     def torrents(self):
         out = []
         for t in self._json("GET", "/torrents", params={"limit": 100}) or []:
-            if t.get("status") == "waiting_files_selection":
-                self._select_all(t["id"])
+            state = t.get("status", "")
+            if state == "waiting_files_selection":
+                try:
+                    self._select_all(t["id"])
+                except ApiError as e:
+                    state = f"select failed: {e}"
             out.append({
                 "id": str(t["id"]),
                 "name": t.get("filename", ""),
                 "progress": float(t.get("progress") or 0),
-                "state": t.get("status", ""),
+                "state": state,
                 "done": t.get("status") == "downloaded",
                 "size": int(t.get("bytes") or 0),
                 "seeds": int(t.get("seeders") or 0),
@@ -110,7 +125,11 @@ class RealDebrid(_Client):
         info = self._json("GET", f"/torrents/info/{tid}") or {}
         out = []
         for link in info.get("links") or []:
-            u = self._json("POST", "/unrestrict/link", data={"link": link})
+            try:
+                u = self._json("POST", "/unrestrict/link", data={"link": link})
+            except ApiError as e:
+                out.append({"name": f"Failed: {e}", "url": None})
+                break  # keep what we have; retrying immediately would only add more 429s
             out.append({"name": u.get("filename") or link, "url": u["download"]})
         return out
 
@@ -122,13 +141,11 @@ class Torbox(_Client):
     BASE = "https://api.torbox.app/v1/api"
     name = "Torbox"
     PLANS = {0: "Free", 1: "Essential", 2: "Pro", 3: "Standard"}
-    AUTH_ERRORS = ("NO_AUTH", "BAD_TOKEN", "AUTH_ERROR")
-
     def _json(self, method, path, **kw):
         body = self._req(method, path, **kw).json()
         if not body.get("success"):
-            if body.get("error") in self.AUTH_ERRORS:
-                raise ApiError("Invalid API key")
+            if body.get("error") in TORBOX_AUTH_ERRORS:
+                raise ApiError(INVALID_KEY)
             raise ApiError(body.get("detail") or body.get("error") or "Torbox error")
         return body.get("data")
 
@@ -179,7 +196,11 @@ class Torbox(_Client):
         item = self._json("GET", list_path, params={"id": int(tid), "bypass_cache": "true"}) or {}
         out = []
         for f in item.get("files") or []:
-            url = self._json("GET", dl_path, params={"token": self.token, id_key: int(tid), "file_id": f["id"]})
+            try:
+                url = self._json("GET", dl_path, params={"token": self.token, id_key: int(tid), "file_id": f["id"]})
+            except ApiError as e:
+                out.append({"name": f"Failed: {e}", "url": None})
+                break
             out.append({"name": f.get("short_name") or f.get("name") or str(f["id"]), "url": url})
         return out
 

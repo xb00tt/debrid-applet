@@ -123,12 +123,47 @@ def test_rd_add_link():
 
 
 def test_invalid_key():
-    for code in (401, 403):
+    cases = [
+        RealDebrid("t", FakeSession(FakeResp(401, {"error": "bad_token", "error_code": 8}))),
+        Torbox("t", FakeSession(FakeResp(403, {"success": False, "error": "BAD_TOKEN", "detail": "bad", "data": None}))),
+        Torbox("t", FakeSession(FakeResp(403, None))),
+    ]
+    for c in cases:
         try:
-            RealDebrid("t", FakeSession(FakeResp(code, {"error": "bad"}))).account()
+            c.account()
             assert False, "expected ApiError"
         except ApiError as e:
             assert str(e) == "Invalid API key"
+
+
+def test_403_with_service_message_is_not_invalid_key():
+    try:
+        RealDebrid("t", FakeSession(FakeResp(403, {"error": "permission_denied", "error_code": 9}))).account()
+        assert False
+    except ApiError as e:
+        assert str(e) == "permission_denied"
+
+
+def test_rd_select_failure_keeps_list():
+    s = FakeSession(FakeResp(200, [
+        {"id": "B", "filename": "b.iso", "progress": 0, "status": "waiting_files_selection", "bytes": 10},
+        {"id": "C", "filename": "c.zip", "progress": 100, "status": "downloaded", "bytes": 5},
+    ]), FakeResp(403, {"error": "infringing_file", "error_code": 35}))
+    out = RealDebrid("t", s).torrents()
+    assert [t["id"] for t in out] == ["B", "C"]
+    assert out[0]["state"] == "select failed: infringing_file"
+
+
+def test_links_partial_on_rate_limit():
+    s = FakeSession(
+        FakeResp(200, {"id": "A", "links": ["https://rd/1", "https://rd/2", "https://rd/3"]}),
+        FakeResp(200, {"filename": "one.mkv", "download": "https://cdn/one"}),
+        FakeResp(429, {}),
+    )
+    out = RealDebrid("t", s).links("A")
+    assert out[0] == {"name": "one.mkv", "url": "https://cdn/one"}
+    assert out[1]["url"] is None and "Rate limited" in out[1]["name"]
+    assert len(out) == 2 and len(s.calls) == 3
 
 
 def test_rate_limited():
