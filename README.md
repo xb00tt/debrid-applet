@@ -25,7 +25,9 @@ Right-click the tray icon → **Settings…** → paste your API keys
 (from <https://torbox.app/settings>, <https://real-debrid.com/apitoken>, <https://alldebrid.com/apikeys>) → **Test keys** → **Save**.
 Leave a key empty and that tab just says "Not configured".
 Keys are stored in `~/.config/debrid-applet/config.json` with mode 600, or in the system keyring (libsecret)
-if you tick that in Settings; they never leave your machine except in requests to the services.
+if you tick that in Settings; the file copy is only blanked after the keyring hands the key back, and a keyring
+that returns nothing at startup raises a notification instead of silently running without keys. Keys never leave
+your machine except in requests to the services.
 
 ## Tray icon
 

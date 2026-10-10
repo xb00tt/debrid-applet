@@ -871,8 +871,23 @@ def test_keyring_roundtrip(tmp_dir="/tmp/debrid-test-keyring"):
     assert da.load_config()["torbox_key"] == "tb"
     da.save_config({"torbox_key": "tb", "realdebrid_key": "", "keys_in_keyring": False})
     assert json.load(open(da.CONFIG))["torbox_key"] == "tb" and store == {}
+    # a store whose read-back fails must leave the key in the file
+    da.save_config({"torbox_key": "tb2", "realdebrid_key": "", "keys_in_keyring": True})
+    da.keyring_lookup = lambda name: ""
+    da.save_config({"torbox_key": "tb3", "realdebrid_key": "", "keys_in_keyring": True})
+    assert json.load(open(da.CONFIG))["torbox_key"] == "tb3"
+    # turning the option off with EMPTY keys in memory must not wipe the keyring (that is how keys got lost once)
+    store["realdebrid_key"] = "rd"
+    da.keyring_lookup = lambda name: store.get(name, "")
+    da.save_config({"torbox_key": "", "realdebrid_key": "", "keys_in_keyring": False})
+    assert store == {"torbox_key": "tb3", "realdebrid_key": "rd"}
+    # loading with the flag on but nothing retrievable reports it instead of silently going empty
+    store.clear()
+    da.save_config({"torbox_key": "", "realdebrid_key": "", "keys_in_keyring": True})
+    cfg = da.load_config()
+    assert cfg["torbox_key"] == "" and cfg.get("_keyring_problem")
     da.Secret = None
-    assert da.load_config()["torbox_key"] == "tb"
+    assert "_keyring_problem" not in da.load_config()
 
 
 def test_config_migration():

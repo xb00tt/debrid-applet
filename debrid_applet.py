@@ -113,32 +113,37 @@ def load_config():
     except (OSError, ValueError):
         return dict(EMPTY_CONFIG)
     if cfg.get("keys_in_keyring") and Secret:
+        failed = False
         for name in KEY_FIELDS:
             if not cfg.get(name):
                 try:
                     cfg[name] = keyring_lookup(name)
                 except GLib.Error:
-                    pass
+                    failed = True
+        if failed or not any(cfg.get(n) for n in KEY_FIELDS):
+            cfg["_keyring_problem"] = True  # in-memory flag only: the keyring gave nothing back
     return cfg
 
 
 def save_config(cfg):
     """Write config.json (0600). With keys_in_keyring the API keys go to libsecret and the file keeps blanks."""
-    on_disk = dict(cfg)
+    on_disk = {k: v for k, v in cfg.items() if not k.startswith("_")}
     if cfg.get("keys_in_keyring") and Secret:
         for name in KEY_FIELDS:
             if cfg.get(name):
-                try:
+                try:  # blank the file copy only once the keyring hands the same value back
                     keyring_store(name, cfg[name])
-                    on_disk[name] = ""
+                    if keyring_lookup(name) == cfg[name]:
+                        on_disk[name] = ""
                 except GLib.Error:
                     pass  # keyring unavailable: keep it in the file rather than lose it
     elif Secret:
         for name in KEY_FIELDS:
-            try:
-                keyring_clear(name)
-            except GLib.Error:
-                pass
+            if cfg.get(name):  # only drop a keyring entry when the same key is being written to the file
+                try:
+                    keyring_clear(name)
+                except GLib.Error:
+                    pass
     os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
     os.chmod(CONFIG_DIR, 0o700)
     fd = os.open(CONFIG, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -1823,6 +1828,9 @@ class App:
         self.window.add(self.notebook)
         self.build_tabs()
 
+        if self.cfg.pop("_keyring_problem", False):
+            notify("API keys not found in the keyring",
+                   "Settings → Accounts: paste the keys again. They are kept in the file until the keyring is confirmed.")
         if not any(self.cfg[k] for k in ("torbox_key", "realdebrid_key", "alldebrid_key")):
             self.open_settings()
         self.refresh()  # every poll schedules the next one (see _schedule)
