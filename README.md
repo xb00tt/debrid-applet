@@ -58,7 +58,7 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 ## Finding things
 
 - Filter box matches name or state as you type; the dropdown next to it narrows by state
-  (Active / Done / Seeding / Stalled / Error). `Ctrl+F` focuses the box, `Esc` clears it.
+  (Active / Done / Seeding / Stalled / Error); the dropdown choice is remembered per service (toggle in Settings). `Ctrl+F` focuses the box, `Esc` clears it.
 - Lists start newest-first. Click a header to sort, drag headers to reorder, right-click a header to show or hide columns.
   Layout and sort are remembered per service. Real-Debrid hides Up / Peers / Ratio by default since it never reports them.
 - Dates read "2 hours ago"; hover for the exact time.

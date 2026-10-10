@@ -33,7 +33,8 @@ GLib.set_prgname(APP_ID)
 CONFIG_DIR = os.path.expanduser("~/.config/debrid-applet")
 CONFIG = os.path.join(CONFIG_DIR, "config.json")
 EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "notify_added": True, "notify_done": True,
-                "watch_clipboard": True, "columns": {}, "window": []}  # columns: per-service, see column_layout()
+                "watch_clipboard": True, "columns": {}, "window": [],  # columns: per-service, see column_layout()
+                "remember_filter": True, "filters": {}}  # filters: last state-filter choice per service
 POLL_FAST, POLL_SLOW = 8, 60  # seconds between polls while something is active / when everything is idle
 INVALID_KEY = "Invalid API key"
 
@@ -331,8 +332,9 @@ class ServiceTab(Gtk.Box):
         self.state_filter = Gtk.ComboBoxText()
         for key, label in STATE_FILTERS:
             self.state_filter.append(key, label)
-        self.state_filter.set_active_id("all")
-        self.state_filter.connect("changed", lambda _c: self._fill())
+        remembered = (app.cfg.get("filters") or {}).get(name, "all") if app.cfg.get("remember_filter") else "all"
+        self.state_filter.set_active_id(remembered if remembered in dict(STATE_FILTERS) else "all")
+        self.state_filter.connect("changed", self.on_state_filter)
         center = Gtk.Box(spacing=6)
         center.pack_start(self.search, False, False, 0)
         center.pack_start(self.state_filter, False, False, 0)
@@ -588,6 +590,12 @@ class ServiceTab(Gtk.Box):
                 if t["done"] and t["id"] not in prev:
                     notify(f"{self.name}: finished", t["name"],
                            [("Open files", lambda t=t: self.app.show_files(self, t))])
+
+    def on_state_filter(self, combo):
+        if self.app.cfg.get("remember_filter"):
+            self.app.cfg.setdefault("filters", {})[self.name] = combo.get_active_id() or "all"
+            save_config(self.app.cfg)
+        self._fill()
 
     def _fill(self):
         """Rebuild the list from the last poll, keeping rows whose name or state matches the filter box."""
@@ -1186,12 +1194,13 @@ class App:
         checks = {}
         for i, (key, label) in enumerate((("notify_added", "Notify when torrent added"),
                                           ("notify_done", "Notify when download finishes on service"),
-                                          ("watch_clipboard", "Watch clipboard for magnet links")), start=2):
+                                          ("watch_clipboard", "Watch clipboard for magnet links"),
+                                          ("remember_filter", "Remember the state filter between runs")), start=2):
             check = Gtk.CheckButton(label=label, active=bool(self.cfg[key]))
             grid.attach(check, 0, i, 2, 1)
             checks[key] = check
         result = Gtk.Label(xalign=0, wrap=True)
-        grid.attach(result, 0, 5, 2, 1)
+        grid.attach(result, 0, 6, 2, 1)
         dlg.get_content_area().add(grid)
         dlg.show_all()
 

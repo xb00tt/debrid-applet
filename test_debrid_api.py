@@ -410,7 +410,7 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
     debrid_applet.CONFIG_DIR = tmp_dir
     debrid_applet.CONFIG = os.path.join(tmp_dir, "config.json")
     defaults = {"torbox_key": "", "realdebrid_key": "", "notify_added": True, "notify_done": True,
-                "watch_clipboard": True, "columns": {}, "window": []}
+                "watch_clipboard": True, "columns": {}, "window": [], "remember_filter": True, "filters": {}}
     assert debrid_applet.load_config() == defaults
     debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b", "notify_done": False})
     assert stat.S_IMODE(os.stat(debrid_applet.CONFIG).st_mode) == 0o600
