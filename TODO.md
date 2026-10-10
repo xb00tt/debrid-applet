@@ -15,7 +15,6 @@ Remaining ideas from the power-user list, none started:
 - **Export / import** of magnets (hash + name) per service.
 - **mpv resume position** (`--save-position-on-quit`) and **season-pack playlists** (all episodes queued).
 - **Retry queue for adds** when a service rate-limits or is down.
-- **Lighter fast polls for huge Real-Debrid lists**: poll `/torrents?filter=active` on the 8 s cadence and the full (paged, 10k+) list only on the 60 s one.
 - **Keyring storage** for API keys via libsecret.
 - **Config schema version** with migration hooks.
 - Another service (Premiumize etc.): recipe in the README's Dev section; only with an account to test against.

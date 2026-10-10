@@ -116,7 +116,7 @@ The first four toggles are on by default.
 ## Behind the scenes
 
 - Polls every 8 s while something is downloading, every 60 s when idle. Hover the tray icon to see the current interval.
-- Whole lists are fetched every poll (Real-Debrid paged 5000 at a time); rows update in place, so lists with 10k+ items stay usable.
+- On the fast cadence Real-Debrid and AllDebrid are asked for active items only and the result is merged into the cached list; the full list (Real-Debrid paged 5000 at a time) is fetched once a minute or as soon as an active item disappears. Rows update in place, so lists with 10k+ items stay usable.
 - The footer has two rows: the last action or error (red is the service's own message; hover for the last few,
   or open the activity log), a spinner while anything is in flight, and "updated … · every N s"; below that a
   colored plan badge (green paid, amber trial, red free), expiry with a countdown, points or downloads, live totals

@@ -134,11 +134,14 @@ class RealDebrid(_Client):
             "extra": f"{u.get('points', 0)} points",
         }
 
-    def torrents(self):
+    def torrents(self, active_only=False):
         out = []
         items, page = [], 1
         while True:  # 5000 is the API maximum per page; keep going while pages come back full
-            chunk = self._json("GET", "/torrents", params={"limit": 5000, "page": page}) or []
+            params = {"limit": 5000, "page": page}
+            if active_only:
+                params["filter"] = "active"
+            chunk = self._json("GET", "/torrents", params=params) or []
             items += chunk
             if len(chunk) < 5000:
                 break
@@ -229,7 +232,7 @@ class Torbox(_Client):
             "extra": f"{u.get('total_downloaded', 0)} downloads",
         }
 
-    def torrents(self):
+    def torrents(self, active_only=False):  # Torbox has no active-only query; always the full list
         out = []
         for kind, path in (("torrent", "/torrents/mylist"), ("webdl", "/webdl/mylist")):
             for t in self._json("GET", path, params={"bypass_cache": "true", "limit": 5000}) or []:
@@ -354,9 +357,10 @@ class AllDebrid(_Client):
         return {"plan": plan, "expires": _iso_from_ts(u.get("premiumUntil"))[:10],
                 "extra": f"{u.get('fidelityPoints', 0)} points"}
 
-    def torrents(self):
+    def torrents(self, active_only=False):
         out = []
-        for m in self._call("POST", "/v4.1/magnet/status").get("magnets") or []:
+        kw = {"data": {"status": "active"}} if active_only else {}
+        for m in self._call("POST", "/v4.1/magnet/status", **kw).get("magnets") or []:
             code = int(m.get("statusCode") or 0)
             size = int(m.get("size") or 0)
             done = code == 4

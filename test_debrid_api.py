@@ -95,6 +95,29 @@ def test_rd_torrents_paginates():
     assert len(s.calls) == 2
 
 
+def test_rd_active_only():
+    s = FakeSession(FakeResp(200, [{"id": "A", "filename": "a", "status": "downloading", "progress": 5}]))
+    out = RealDebrid("t", s).torrents(active_only=True)
+    assert len(out) == 1 and s.calls[0][2]["params"] == {"limit": 5000, "page": 1, "filter": "active"}
+
+
+def test_ad_active_only():
+    s = FakeSession(ad_ok({"magnets": [{"id": 1, "filename": "a", "statusCode": 1, "status": "Downloading", "size": 10}]}))
+    out = AllDebrid("t", s).torrents(active_only=True)
+    assert len(out) == 1 and s.calls[0][2]["data"] == {"status": "active"}
+
+
+def test_merge_active():
+    import debrid_applet as da
+    full = [{"id": "1", "done": False, "name": "a"}, {"id": "2", "done": True, "name": "b"}, {"id": "3", "done": False, "name": "c"}]
+    merged, need_full = da.merge_active(full, [{"id": "1", "done": False, "name": "a2"}, {"id": "3", "done": False, "name": "c"}])
+    assert [t["name"] for t in merged] == ["a2", "b", "c"] and not need_full
+    merged, need_full = da.merge_active(full, [{"id": "1", "done": False, "name": "a"}])  # 3 left the active set
+    assert need_full
+    merged, need_full = da.merge_active(full, [{"id": "1", "done": False, "name": "a"}, {"id": "3", "done": False, "name": "c"}, {"id": "9", "done": False, "name": "new"}])
+    assert [t["id"] for t in merged] == ["9", "1", "2", "3"] and not need_full
+
+
 def test_rd_add_magnet_selects_all():
     s = FakeSession(FakeResp(201, {"id": "X", "uri": "..."}), FakeResp(204))
     RealDebrid("t", s).add_magnet("magnet:?xt=urn:btih:abc")

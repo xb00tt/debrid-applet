@@ -206,6 +206,17 @@ def totals_text(torrents, shown, ticked):
     return " · ".join(parts)
 
 
+def merge_active(full, active):
+    """Overlay an active-only poll onto the last full list. Returns (merged, need_full): need_full is True when
+    something that was active is no longer in the active set (it finished or failed), so a full poll is due."""
+    by_id = {t["id"]: t for t in active}
+    merged = [by_id.pop(t["id"], t) for t in full]
+    merged = list(by_id.values()) + merged  # brand-new active items go first
+    was_active = {t["id"] for t in full if not t["done"]}
+    now_active = {t["id"] for t in active}
+    return merged, bool(was_active - now_active)
+
+
 def strict_videos(links):
     """Only real video files with a URL (no fallback to other files)."""
     return [l for l in links if l["url"] and l["name"].lower().endswith(VIDEO_EXT)]
@@ -452,6 +463,8 @@ class ServiceTab(Gtk.Box):
         self._hold_until = 0
         self._width_timer = 0  # debounce for saving dragged column widths
         self._updated_at = 0  # time of the last successful poll, shown in the footer
+        self._last_full = 0  # time of the last full-list poll
+        self._account = None  # last account dict, reused on active-only polls
 
         row = Gtk.Box(spacing=2)
         for icon, tip, cb in (("list-add-symbolic", "Add magnets / links", self.on_add),
@@ -781,6 +794,7 @@ class ServiceTab(Gtk.Box):
             if error == INVALID_KEY:
                 self.app.open_settings_once()
             return
+        self._account = account
         self._update_account(account)
         days = days_until(account["expires"])
         warned = self.app.cfg.setdefault("notified_expiry", {})
@@ -1328,6 +1342,7 @@ class App:
         self.lock = threading.Lock()
         self._refresh_again = False
         self._timer = 0
+        self._interval = POLL_SLOW
         self._settings_shown_for = None
         self.tabs = []
 
@@ -1482,11 +1497,26 @@ class App:
         for t in tabs:
             t.set_polling(True)
 
+        fast = self._interval == POLL_FAST
+        now = time.time()
+
+        def fetch_one(t):
+            """Full poll, or on the fast cadence an active-only poll merged into the cached list."""
+            light = (fast and t._account is not None and t.torrents and type(t.client) is not Torbox
+                     and now - t._last_full < POLL_SLOW)
+            if light:
+                merged, need_full = merge_active(t.torrents, t.client.torrents(active_only=True))
+                if not need_full:
+                    return t._account, merged
+            account, torrents = t.client.account(), t.client.torrents()
+            t._last_full = now
+            return account, torrents
+
         def fetch():
             results = []
             for t in tabs:
                 try:
-                    results.append((t, t.client.account(), t.client.torrents(), None))
+                    results.append((t, *fetch_one(t), None))
                 except ApiError as e:
                     results.append((t, None, None, str(e)))
                 except Exception as e:
@@ -1511,6 +1541,7 @@ class App:
         """Adaptive polling: fast while downloads run, slow when idle. Replaces any pending timer."""
         if self._timer:
             GLib.source_remove(self._timer)
+        self._interval = seconds
         self._timer = GLib.timeout_add_seconds(seconds, self._tick)
         self.icon.set_tooltip_text(f"Debrid · polling every {seconds} s")
         for t in self.tabs:
