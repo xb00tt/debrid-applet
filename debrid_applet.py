@@ -309,6 +309,16 @@ class App:
         self.window = Gtk.Window(title="Debrid", default_width=640, default_height=480)
         self.window.connect("delete-event", lambda w, _e: w.hide() or True)
         self.notebook = Gtk.Notebook()
+        tools = Gtk.Box(spacing=2)  # icon buttons at the right end of the tab row
+        for icon, tip, cb in (("view-refresh-symbolic", "Refresh", self.refresh),
+                              ("emblem-system-symbolic", "Settings", self.open_settings)):
+            btn = Gtk.Button.new_from_icon_name(icon, Gtk.IconSize.BUTTON)
+            btn.set_relief(Gtk.ReliefStyle.NONE)
+            btn.set_tooltip_text(tip)
+            btn.connect("clicked", cb)
+            tools.pack_start(btn, False, False, 0)
+        tools.show_all()
+        self.notebook.set_action_widget(tools, Gtk.PackType.END)
         self.window.add(self.notebook)
         self.build_tabs()
 
