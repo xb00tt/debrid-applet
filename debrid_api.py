@@ -124,6 +124,7 @@ class RealDebrid(_Client):
                 "ratio": None,
                 "added": t.get("added") or "",
                 "finished": t.get("ended") or "",
+                "hash": t.get("hash") or "",
             })
         return out
 
@@ -204,6 +205,7 @@ class Torbox(_Client):
                     "ratio": float(t.get("ratio") or 0),
                     "added": t.get("created_at") or "",
                     "finished": (t.get("updated_at") or "") if done else "",  # no finish timestamp in the API
+                    "hash": t.get("hash") or "",
                 })
         return out
 

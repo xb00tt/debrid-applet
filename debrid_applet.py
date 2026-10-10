@@ -2,12 +2,13 @@
 """Tray control panel for Torbox and Real-Debrid."""
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
 import time
 from datetime import datetime, timezone
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import gi
 
@@ -16,19 +17,22 @@ gi.require_version("Gdk", "3.0")
 gi.require_version("Pango", "1.0")
 gi.require_version("Notify", "0.7")
 gi.require_version("XApp", "1.0")
-from gi.repository import Gdk, GLib, Gtk, Notify, Pango, XApp  # noqa: E402
+from gi.repository import Gdk, Gio, GLib, Gtk, Notify, Pango, XApp  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from debrid_api import ApiError, RealDebrid, Torbox, human_size  # noqa: E402
 
 APP_ID = "debrid-applet"  # WM_CLASS, icon name and .desktop basename all match
+DBUS_ID = "io.github.xb00tt.DebridApplet"  # single-instance guard
+PLAYERS = ("mpv", "vlc", "celluloid", "smplayer", "totem")
+VIDEO_EXT = (".mkv", ".mp4", ".avi", ".m4v", ".webm", ".mov", ".ts", ".wmv", ".flv")
 GLib.set_prgname(APP_ID)
 
 CONFIG_DIR = os.path.expanduser("~/.config/debrid-applet")
 CONFIG = os.path.join(CONFIG_DIR, "config.json")
 EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "notify_added": True, "notify_done": True,
-                "columns": {"order": [], "hidden": []}}
+                "watch_clipboard": True, "columns": {"order": [], "hidden": []}}
 POLL_SECONDS = 30
 INVALID_KEY = "Invalid API key"
 
@@ -97,6 +101,20 @@ def add_one(client, item):
     else:
         raise ApiError("not a magnet, link or .torrent")
     return None
+
+
+def find_player():
+    return next((p for p in PLAYERS if shutil.which(p)), None)
+
+
+def video_links(links):
+    """Playable entries from a links() result: video files first, else any real file but the zip bundle."""
+    usable = [l for l in links if l["url"] and not l["name"].startswith("All files")]
+    return [l for l in usable if l["name"].lower().endswith(VIDEO_EXT)] or usable
+
+
+def magnet_for(hash_, name):
+    return f"magnet:?xt=urn:btih:{hash_}&dn={quote(name)}" if hash_ else ""
 
 
 def icon_button(icon, tip, cb):
@@ -196,7 +214,7 @@ ABSOLUTE = {"added": 20, "finished": 21}  # store columns holding the full local
 STORE_TYPES = (str, str, int, str, str, str, bool,  # 0 id, 1 name, 2 progress, 3 state, 4 size, 5 kind, 6 checked
                str, str, str, str, str, str, str,   # 7 dl, 8 ul, 9 seeds, 10 peers, 11 ratio, 12 added, 13 finished
                float, float, float, int, int, float,  # 14 size, 15 dl, 16 ul, 17 seeds, 18 peers, 19 ratio (raw)
-               str, str)  # 20 added, 21 finished (absolute local time)
+               str, str, str)  # 20 added, 21 finished (absolute local time), 22 hash
 CHECKED, STATUS_HOLD = 6, 8
 NUMERIC = ("dl", "ul", "seeds", "peers", "ratio", "size")  # right-aligned
 PALETTE = {"active": "#3b82f6", "done": "#22c55e", "seed": "#14b8a6", "warn": "#f59e0b", "error": "#ef4444"}
@@ -246,10 +264,11 @@ class ServiceTab(Gtk.Box):
                               ("view-refresh-symbolic", "Refresh", app.refresh),
                               ("emblem-system-symbolic", "Settings", app.open_settings)):
             row.pack_start(icon_button(icon, tip, cb), False, False, 0)
+        self.play_btn = text_button("media-playback-start-symbolic", "Play", self.on_play)
         self.links_btn = text_button("insert-link-symbolic", "Links ▾", self.on_links)
         self.copy_btn = text_button("edit-copy-symbolic", "Copy links", self.on_copy_links)
         self.del_btn = text_button("user-trash-symbolic", "Delete", self.on_delete)
-        for b in (self.del_btn, self.copy_btn, self.links_btn):  # pack_end: last packed ends up leftmost
+        for b in (self.del_btn, self.copy_btn, self.links_btn, self.play_btn):  # pack_end: last packed ends up leftmost
             row.pack_end(b, False, False, 0)
         self.search = Gtk.SearchEntry(placeholder_text="Filter", width_chars=30)
         self.search.connect("changed", lambda _e: self._fill())
@@ -299,7 +318,10 @@ class ServiceTab(Gtk.Box):
             self.cols[key] = col
         self.apply_columns()
         self.view.set_has_tooltip(True)
+        self.view.set_enable_search(False)  # the filter box does this job; typeahead would steal keys
         self.view.connect("query-tooltip", self.on_query_tooltip)
+        self.view.connect("button-press-event", self.on_row_press)
+        self.view.connect("row-activated", lambda *_: self.on_play(None) if self.app.player else self.on_links(None))
         self.view.connect("columns-changed", self.on_columns_changed)
         self.store.connect("sort-column-changed", self.on_sort_changed)
         scroller = Gtk.ScrolledWindow(vexpand=True)
@@ -416,7 +438,7 @@ class ServiceTab(Gtk.Box):
         self._update_buttons()
 
     def _row(self, r):
-        return {"id": r[0], "name": r[1], "kind": r[5]}
+        return {"id": r[0], "name": r[1], "kind": r[5], "hash": r[22]}
 
     def _selected(self):
         model, it = self.view.get_selection().get_selected()
@@ -432,6 +454,7 @@ class ServiceTab(Gtk.Box):
 
     def _update_buttons(self):
         n = len(self._targets()) if self.client is not None and not self._is_busy else 0
+        self.play_btn.set_sensitive(n == 1 and bool(self.app.player))
         self.links_btn.set_sensitive(n == 1)
         self.copy_btn.set_sensitive(n >= 1)
         self.del_btn.set_sensitive(n >= 1)
@@ -502,7 +525,7 @@ class ServiceTab(Gtk.Box):
                 float(t["size"]), float(t["speed"] or 0), float(t["up_speed"] or -1),
                 int(t["seeds"]), -1 if t["peers"] is None else int(t["peers"]),
                 -1.0 if t["ratio"] is None else float(t["ratio"]),
-                local_time(t["added"]), local_time(t["finished"]),
+                local_time(t["added"]), local_time(t["finished"]), t["hash"],
             ])
         if selected:
             for row in self.store:
@@ -586,6 +609,70 @@ class ServiceTab(Gtk.Box):
             self.app.refresh()
         self._run(work, done)
 
+    def on_row_press(self, view, event):
+        """Right-click: select the row under the pointer (unless rows are ticked) and show the context menu."""
+        if event.button != 3:
+            return False
+        hit = view.get_path_at_pos(int(event.x), int(event.y))
+        if not hit:
+            return False
+        if not any(r[CHECKED] for r in self.store):
+            view.get_selection().select_path(hit[0])
+        n = len(self._targets())
+        menu = Gtk.Menu()
+        for label, cb, ok in (("Play", self.on_play, n == 1 and bool(self.app.player)),
+                              ("Links…", self.on_links, n == 1),
+                              ("Copy links", self.on_copy_links, n >= 1),
+                              ("Copy magnet", self.on_copy_magnet, n >= 1),
+                              (None, None, True),
+                              ("Delete", self.on_delete, n >= 1)):
+            if label is None:
+                menu.append(Gtk.SeparatorMenuItem())
+                continue
+            item = Gtk.MenuItem(label=label, sensitive=ok)
+            item.connect("activate", lambda _i, cb=cb: cb(None))
+            menu.append(item)
+        menu.show_all()
+        menu.popup_at_pointer(event)
+        return True
+
+    def on_copy_magnet(self, _w):
+        magnets = [magnet_for(t["hash"], t["name"]) for t in self._targets()]
+        magnets = [m for m in magnets if m]
+        if magnets:
+            copy_text("\n".join(magnets))
+        self.say(f"Copied {len(magnets)} magnet link(s)" if magnets else "No hash known for the selection")
+
+    def on_play(self, _w):
+        targets = self._targets()
+        if len(targets) != 1 or not self.app.player:
+            return
+        t = targets[0]
+
+        def pick(links, err):
+            if err:
+                return
+            vids = video_links(links)
+            if not vids:
+                self.say("Nothing playable yet (not finished?)")
+            elif len(vids) == 1:
+                self.play(vids[0]["url"])
+            else:
+                menu = Gtk.Menu()
+                for v in vids:
+                    item = Gtk.MenuItem(label=v["name"][:80])
+                    item.connect("activate", lambda _i, url=v["url"]: self.play(url))
+                    menu.append(item)
+                menu.show_all()
+                menu.popup_at_pointer(None)
+        self._run(lambda: self.client.links(t["id"], t["kind"]), pick)
+
+    def play(self, url):
+        if not url.lower().startswith(("http://", "https://")):
+            return
+        subprocess.Popen([self.app.player, url])
+        self.say(f"Playing in {self.app.player}")
+
     def on_links(self, btn):
         targets = self._targets()
         if len(targets) != 1:
@@ -608,7 +695,10 @@ class ServiceTab(Gtk.Box):
             copy_all.connect("activate", lambda _i: copy_text("\n".join(l["url"] for l in links if l["url"])))
             menu.append(copy_all)
             menu.show_all()
-            menu.popup_at_widget(btn, Gdk.Gravity.SOUTH_WEST, Gdk.Gravity.NORTH_WEST, None)
+            if btn is not None:
+                menu.popup_at_widget(btn, Gdk.Gravity.SOUTH_WEST, Gdk.Gravity.NORTH_WEST, None)
+            else:
+                menu.popup_at_pointer(None)
             self.say(f"{len(links)} link(s)")
         self._run(lambda: self.client.links(t["id"], t["kind"]), show)
 
@@ -668,7 +758,9 @@ class ServiceTab(Gtk.Box):
 
 
 class App:
-    def __init__(self):
+    def __init__(self, gapp):
+        self.gapp = gapp
+        self.player = find_player()
         Notify.init(APP_ID)
         css = Gtk.CssProvider()
         css.load_from_data(CSS)
@@ -688,7 +780,7 @@ class App:
         self.icon.connect("activate", self.toggle_window)
         menu = Gtk.Menu()
         for label, cb in (("Open", self.toggle_window), ("Refresh", self.refresh),
-                          ("Settings…", self.open_settings), ("Quit", Gtk.main_quit)):
+                          ("Settings…", self.open_settings), ("Quit", lambda *_: self.gapp.quit())):
             item = Gtk.MenuItem(label=label)
             item.connect("activate", cb)
             menu.append(item)
@@ -696,7 +788,13 @@ class App:
         self.icon.set_secondary_menu(menu)
 
         self.window = Gtk.Window(title="Debrid", default_width=1100, default_height=560)
+        self.gapp.add_window(self.window)
         self.window.connect("delete-event", lambda w, _e: w.hide() or True)
+        self.window.connect("key-press-event", self.on_key)
+        self.clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        self.clipboard.connect("owner-change", lambda clip, _e: self.cfg.get("watch_clipboard") and clip.request_text(self.on_clipboard_text))
+        self._last_clip = None
+        self._clip_note = None
         self.notebook = Gtk.Notebook()
         self.window.add(self.notebook)
         self.build_tabs()
@@ -717,6 +815,44 @@ class App:
         for tab in self.tabs:
             self.notebook.append_page(tab, Gtk.Label(label=tab.name))
         self.notebook.show_all()
+
+    def current_tab(self):
+        return self.tabs[self.notebook.get_current_page()]
+
+    def on_key(self, _w, event):
+        tab = self.current_tab()
+        ctrl = bool(event.state & Gdk.ModifierType.CONTROL_MASK)
+        key = Gdk.keyval_to_lower(event.keyval)
+        if key == Gdk.KEY_Escape:
+            self.window.hide()
+        elif ctrl and key == Gdk.KEY_f:
+            tab.search.grab_focus()
+        elif ctrl and key == Gdk.KEY_r:
+            self.refresh()
+        elif self.window.get_focus() is tab.view and key == Gdk.KEY_Delete:
+            tab.on_delete(None)
+        elif self.window.get_focus() is tab.view and ctrl and key == Gdk.KEY_a:
+            tab.on_toggle_all(None)
+        elif self.window.get_focus() is tab.view and ctrl and key == Gdk.KEY_c:
+            tab.on_copy_links(None)
+        else:
+            return False
+        return True
+
+    def on_clipboard_text(self, _clip, text):
+        """A magnet landed on the clipboard: offer to add it, one button per configured service."""
+        text = (text or "").strip()
+        if not text.lower().startswith("magnet:") or text == self._last_clip:
+            return
+        self._last_clip = text
+        tabs = [t for t in self.tabs if t.client is not None]
+        if not tabs:
+            return
+        note = Notify.Notification.new("Magnet copied", add_label(text), APP_ID)
+        for t in tabs:
+            note.add_action(t.name, f"Add to {t.name}", lambda _n, _a, *_, tab=t: tab.add_items([text]))
+        note.show()
+        self._clip_note = note  # keep it alive for the action callbacks
 
     def toggle_window(self, *_):
         if self.window.is_visible():
@@ -784,7 +920,8 @@ class App:
             entries[key] = entry
         checks = {}
         for i, (key, label) in enumerate((("notify_added", "Notify when torrent added"),
-                                          ("notify_done", "Notify when download finishes on service")), start=2):
+                                          ("notify_done", "Notify when download finishes on service"),
+                                          ("watch_clipboard", "Watch clipboard for magnet links")), start=2):
             check = Gtk.CheckButton(label=label, active=bool(self.cfg[key]))
             grid.attach(check, 0, i, 2, 1)
             checks[key] = check
@@ -799,6 +936,21 @@ class App:
         dlg.destroy()
 
 
+def main():
+    """One instance only: a second launch just raises the existing window."""
+    gapp = Gtk.Application(application_id=DBUS_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
+    state = {}
+
+    def activate(a):
+        if "app" not in state:
+            state["app"] = App(a)
+            a.hold()  # keep running while the window is hidden
+        else:
+            state["app"].window.show_all()
+            state["app"].window.present()
+    gapp.connect("activate", activate)
+    gapp.run(sys.argv)
+
+
 if __name__ == "__main__":
-    App()
-    Gtk.main()
+    main()

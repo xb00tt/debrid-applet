@@ -61,14 +61,15 @@ def test_rd_account():
 def test_rd_torrents_normalize_and_autoselect():
     s = FakeSession(FakeResp(200, [
         {"id": "A", "filename": "a.mkv", "progress": 42.5, "status": "downloading", "bytes": 1000, "seeders": 3, "speed": 50,
-         "added": "2026-10-01T10:00:00.000Z"},
+         "added": "2026-10-01T10:00:00.000Z", "hash": "abc123"},
         {"id": "B", "filename": "b.iso", "progress": 0, "status": "waiting_files_selection", "bytes": 10},
         {"id": "C", "filename": "c.zip", "progress": 100, "status": "downloaded", "bytes": 5, "ended": "2026-10-02T11:00:00.000Z"},
     ]), FakeResp(204))
     out = RealDebrid("t", s).torrents()
     assert out[0] == {"id": "A", "name": "a.mkv", "progress": 42.5, "state": "downloading", "done": False,
                       "size": 1000, "seeds": 3, "speed": 50, "kind": "torrent", "up_speed": None, "peers": None,
-                      "ratio": None, "added": "2026-10-01T10:00:00.000Z", "finished": ""}
+                      "ratio": None, "added": "2026-10-01T10:00:00.000Z", "finished": "", "hash": "abc123"}
+    assert out[1]["hash"] == ""
     assert out[2]["finished"] == "2026-10-02T11:00:00.000Z" and out[2]["added"] == ""
     assert out[1]["seeds"] == 0 and out[1]["done"] is False
     assert out[2]["done"] is True
@@ -218,7 +219,8 @@ def test_tb_torrents_merges_webdl():
     s = FakeSession(
         ok([{"id": 7, "name": "seven.mkv", "progress": 0.25, "download_state": "downloading",
              "download_finished": False, "download_present": False, "size": 2000, "seeds": 9, "download_speed": 300,
-             "upload_speed": 10, "peers": 4, "ratio": 0.5, "created_at": "2026-10-02T00:00:00Z", "updated_at": "2026-10-03T00:00:00Z"},
+             "upload_speed": 10, "peers": 4, "ratio": 0.5, "created_at": "2026-10-02T00:00:00Z", "updated_at": "2026-10-03T00:00:00Z",
+             "hash": "def456"},
             {"id": 8, "name": "eight.iso", "progress": 1, "download_state": "uploading",
              "download_finished": True, "download_present": True, "size": 1, "updated_at": "2026-10-04T00:00:00Z"}]),
         ok([{"id": 3, "name": "web.bin", "progress": 1, "download_state": "completed",
@@ -227,11 +229,11 @@ def test_tb_torrents_merges_webdl():
     out = Torbox("t", s).torrents()
     assert out[0] == {"id": "7", "name": "seven.mkv", "progress": 25.0, "state": "downloading", "done": False,
                       "size": 2000, "seeds": 9, "speed": 300, "kind": "torrent", "up_speed": 10, "peers": 4,
-                      "ratio": 0.5, "added": "2026-10-02T00:00:00Z", "finished": ""}
+                      "ratio": 0.5, "added": "2026-10-02T00:00:00Z", "finished": "", "hash": "def456"}
     assert out[1]["done"] is True and out[1]["progress"] == 100.0 and out[1]["finished"] == "2026-10-04T00:00:00Z"
     assert out[2] == {"id": "3", "name": "web.bin", "progress": 100.0, "state": "web: completed", "done": True,
                       "size": 5, "seeds": 0, "speed": 0, "kind": "webdl", "up_speed": 0, "peers": 0, "ratio": 0.0,
-                      "added": "", "finished": ""}
+                      "added": "", "finished": "", "hash": ""}
     assert s.calls[0][:2] == ("GET", TB + "/torrents/mylist")
     assert s.calls[0][2]["params"] == {"bypass_cache": "true"}
     assert s.calls[1][:2] == ("GET", TB + "/webdl/mylist")
@@ -370,7 +372,7 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
     debrid_applet.CONFIG_DIR = tmp_dir
     debrid_applet.CONFIG = os.path.join(tmp_dir, "config.json")
     defaults = {"torbox_key": "", "realdebrid_key": "", "notify_added": True, "notify_done": True,
-                "columns": {"order": [], "hidden": []}}
+                "watch_clipboard": True, "columns": {"order": [], "hidden": []}}
     assert debrid_applet.load_config() == defaults
     debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b", "notify_done": False})
     assert stat.S_IMODE(os.stat(debrid_applet.CONFIG).st_mode) == 0o600
@@ -460,6 +462,17 @@ def test_relative_time():
     assert rel(days=800) == "2 years ago"
     assert debrid_applet.relative_time("", now) == "" and debrid_applet.relative_time("junk", now) == ""
     assert debrid_applet.relative_time((now + timedelta(minutes=5)).isoformat(), now) == "just now"
+
+
+def test_video_links_and_magnet():
+    import debrid_applet
+    links = [{"name": "All files (zip)", "url": "https://cdn/zip"}, {"name": "ep1.mkv", "url": "https://cdn/1"},
+             {"name": "ep1.srt", "url": "https://cdn/s"}, {"name": "Failed: x", "url": None}]
+    assert debrid_applet.video_links(links) == [{"name": "ep1.mkv", "url": "https://cdn/1"}]
+    assert debrid_applet.video_links(links[:1] + links[2:]) == [{"name": "ep1.srt", "url": "https://cdn/s"}]
+    assert debrid_applet.video_links([]) == []
+    assert debrid_applet.magnet_for("ABC123", "My Show S01") == "magnet:?xt=urn:btih:ABC123&dn=My%20Show%20S01"
+    assert debrid_applet.magnet_for("", "x") == ""
 
 
 def test_add_label():
