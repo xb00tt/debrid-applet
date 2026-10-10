@@ -1050,7 +1050,9 @@ class App:
         tab = self.current_tab()
         ctrl = bool(event.state & Gdk.ModifierType.CONTROL_MASK)
         key = Gdk.keyval_to_lower(event.keyval)
-        if key == Gdk.KEY_Escape:
+        if key == Gdk.KEY_Escape and self.window.get_focus() is tab.search and tab.search.get_text():
+            tab.search.set_text("")  # first Esc clears the filter, a second one hides the window
+        elif key == Gdk.KEY_Escape:
             self.hide_window()
         elif ctrl and key == Gdk.KEY_f:
             tab.search.grab_focus()
