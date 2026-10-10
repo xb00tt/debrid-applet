@@ -540,7 +540,7 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
                 "watch_dir": "", "watch_service": "Torbox", "auto_download": False, "download_dir": "~/Downloads",
                 "http_port": 0, "http_token": "", "notified_expiry": {}, "log_level": "actions", "log_max_kb": 1000,
                 "stop_seeding_when_done": False, "auto_download_videos_only": False, "delete_after_download": False,
-                "route_cached": False}
+                "route_cached": False, "keys_in_keyring": False, "config_version": 2}
     assert debrid_applet.load_config() == defaults
     debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b", "notify_done": False})
     assert debrid_applet.column_layout({}, "AllDebrid")["hidden"] == ["peers", "ratio"]
@@ -841,6 +841,42 @@ def test_merged_client():
     assert m.links("Torbox|7", "torrent") == [{"name": "Torbox-7", "url": "u", "size": 1}]
     m.add_magnet("magnet:?x"); assert tb.calls == [("magnet", "magnet:?x")]  # first configured service
     assert m.account()["plan"] == "all services" and m.name == "All"
+
+
+def test_retryable():
+    import debrid_applet as da
+    assert da.retryable("Rate limited, retrying next tick") and da.retryable("Network error: timeout")
+    assert not da.retryable("Invalid magnet") and not da.retryable("Invalid API key")
+
+
+def test_keyring_roundtrip(tmp_dir="/tmp/debrid-test-keyring"):
+    import os, shutil, json
+    import debrid_applet as da
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    da.CONFIG_DIR = tmp_dir
+    da.CONFIG = os.path.join(tmp_dir, "config.json")
+    store = {}
+    da.Secret = object()  # pretend libsecret is available
+    da.keyring_store = lambda name, value: store.__setitem__(name, value)
+    da.keyring_lookup = lambda name: store.get(name, "")
+    da.keyring_clear = lambda name: store.pop(name, None)
+    da.save_config({"torbox_key": "tb", "realdebrid_key": "", "keys_in_keyring": True})
+    on_disk = json.load(open(da.CONFIG))
+    assert on_disk["torbox_key"] == "" and on_disk["keys_in_keyring"] is True and store == {"torbox_key": "tb"}
+    assert da.load_config()["torbox_key"] == "tb"
+    da.save_config({"torbox_key": "tb", "realdebrid_key": "", "keys_in_keyring": False})
+    assert json.load(open(da.CONFIG))["torbox_key"] == "tb" and store == {}
+    da.Secret = None
+    assert da.load_config()["torbox_key"] == "tb"
+
+
+def test_config_migration():
+    import debrid_applet as da
+    old = {"torbox_key": "x", "columns": {"order": ["name"], "hidden": ["ul"]}}
+    cfg = da.migrate_config(dict(da.EMPTY_CONFIG, **old))
+    assert cfg["config_version"] == 2
+    assert cfg["columns"]["Torbox"]["hidden"] == ["ul"] and cfg["columns"]["Real-Debrid"]["order"] == ["name"]
+    assert da.migrate_config(dict(da.EMPTY_CONFIG))["config_version"] == 2
 
 
 def test_add_label():

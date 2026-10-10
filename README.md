@@ -23,8 +23,8 @@ is optional and enables **Play**.
 Right-click the tray icon → **Settings…** → paste your API keys
 (from <https://torbox.app/settings>, <https://real-debrid.com/apitoken>, <https://alldebrid.com/apikeys>) → **Test keys** → **Save**.
 Leave a key empty and that tab just says "Not configured".
-Keys are stored in `~/.config/debrid-applet/config.json` with mode 600 and never leave your machine
-except in requests to the services.
+Keys are stored in `~/.config/debrid-applet/config.json` with mode 600, or in the system keyring (libsecret)
+if you tick that in Settings; they never leave your machine except in requests to the services.
 
 ## Tray icon
 
@@ -127,7 +127,7 @@ Right-click the tray icon → **Settings…**, or the gear in the toolbar.
 - Watch clipboard for magnet links.
 - Remember the state filter between runs.
 - Double-click plays videos (otherwise opens Files). Off by default; the first time you double-click an item with video files the applet asks once whether to turn it on. When on, items without video files still open Files.
-- Download finished items automatically, videos only, delete after download; Torbox stop seeding when done. All off by default.
+- Download finished items automatically, videos only, delete after download; Torbox stop seeding when done; keys in the system keyring. All off by default.
 
 The first four toggles are on by default.
 
@@ -141,7 +141,8 @@ The first four toggles are on by default.
   (down/up speed, active, items, total size, "showing N" under a filter, "K ticked") and a button to the service's
   web dashboard.
 - Window size, column layout and widths, sort order and state filter persist across restarts, per service.
-- Config lives in `~/.config/debrid-applet/config.json`; delete it to start over. To see the one-time double-click question again, set `dblclick_asked` to `false` there.
+- Adds that fail with a rate limit or a network error are retried every 60 s, up to three times.
+- Config lives in `~/.config/debrid-applet/config.json` (versioned, migrated on load); delete it to start over. To see the one-time double-click question again, set `dblclick_asked` to `false` there.
 
 ## Dev
 

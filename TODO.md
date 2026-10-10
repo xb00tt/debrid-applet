@@ -7,8 +7,5 @@ Remaining ideas from the power-user list, none started:
 
 - **RSS / watch lists** with regex filters and auto-add.
 - **Stremio / Kodi / Jellyfin hand-off** for Play.
-- **Retry queue for adds** when a service rate-limits or is down.
-- **Keyring storage** for API keys via libsecret.
-- **Config schema version** with migration hooks.
 - Another service (Premiumize etc.): recipe in the README's Dev section; only with an account to test against.
 - AllDebrid hoster-link unlock: request path verified live; a successful unlock of a real hoster link hasn't been observed yet.

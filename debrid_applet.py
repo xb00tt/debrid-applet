@@ -21,6 +21,11 @@ gi.require_version("Pango", "1.0")
 gi.require_version("Notify", "0.7")
 gi.require_version("XApp", "1.0")
 from gi.repository import Gdk, Gio, GLib, Gtk, Notify, Pango, XApp  # noqa: E402
+try:
+    gi.require_version("Secret", "1")
+    from gi.repository import Secret  # noqa: E402
+except (ValueError, ImportError):  # no libsecret: the keyring option stays greyed out
+    Secret = None
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -59,25 +64,80 @@ EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "no
                 "stop_seeding_when_done": False,  # Torbox: send stop_seeding as soon as an item finishes
                 "auto_download_videos_only": False, "delete_after_download": False,  # auto-download rules
                 "route_cached": False,  # Add box: send magnets Torbox already has to Torbox
+                "keys_in_keyring": False,  # keep API keys in the system keyring instead of config.json
+                "config_version": 2,  # bumped when the layout changes; see migrate_config()
                 "notified_expiry": {}}  # service -> expiry date already warned about
 POLL_FAST, POLL_SLOW = 8, 60  # seconds between polls while something is active / when everything is idle
 INVALID_KEY = "Invalid API key"
 
 
+KEY_FIELDS = ("torbox_key", "realdebrid_key", "alldebrid_key")
+SECRET_SCHEMA = (Secret.Schema.new("io.github.xb00tt.DebridApplet", Secret.SchemaFlags.NONE,
+                                   {"key": Secret.SchemaAttributeType.STRING}) if Secret else None)
+
+
+def keyring_store(name, value):
+    Secret.password_store_sync(SECRET_SCHEMA, {"key": name}, Secret.COLLECTION_DEFAULT, f"Debrid applet {name}", value, None)
+
+
+def keyring_lookup(name):
+    return Secret.password_lookup_sync(SECRET_SCHEMA, {"key": name}, None) or ""
+
+
+def keyring_clear(name):
+    Secret.password_clear_sync(SECRET_SCHEMA, {"key": name}, None)
+
+
+def migrate_config(cfg):
+    """Bring an older config up to the current layout. Each step is idempotent."""
+    version = int(cfg.get("config_version") or 1)
+    if version < 2:  # one shared column layout -> one per service
+        cols = cfg.get("columns") or {}
+        for name in SERVICES:
+            column_layout(cols, name)
+        cfg["columns"] = cols
+    cfg["config_version"] = EMPTY_CONFIG["config_version"]
+    return cfg
+
+
 def load_config():
     try:
         with open(CONFIG) as f:
-            return {**EMPTY_CONFIG, **json.load(f)}
+            cfg = migrate_config({**EMPTY_CONFIG, **json.load(f)})
     except (OSError, ValueError):
         return dict(EMPTY_CONFIG)
+    if cfg.get("keys_in_keyring") and Secret:
+        for name in KEY_FIELDS:
+            if not cfg.get(name):
+                try:
+                    cfg[name] = keyring_lookup(name)
+                except GLib.Error:
+                    pass
+    return cfg
 
 
 def save_config(cfg):
+    """Write config.json (0600). With keys_in_keyring the API keys go to libsecret and the file keeps blanks."""
+    on_disk = dict(cfg)
+    if cfg.get("keys_in_keyring") and Secret:
+        for name in KEY_FIELDS:
+            if cfg.get(name):
+                try:
+                    keyring_store(name, cfg[name])
+                    on_disk[name] = ""
+                except GLib.Error:
+                    pass  # keyring unavailable: keep it in the file rather than lose it
+    elif Secret:
+        for name in KEY_FIELDS:
+            try:
+                keyring_clear(name)
+            except GLib.Error:
+                pass
     os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
     os.chmod(CONFIG_DIR, 0o700)
     fd = os.open(CONFIG, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
-        json.dump(cfg, f)
+        json.dump(on_disk, f)
 
 
 def run_async(fn, on_done):
@@ -307,6 +367,10 @@ def read_magnets(path):
             if line and not line.startswith("#"):
                 out.append(line.split("\t", 1)[0].strip())
     return out
+
+
+def retryable(message):
+    return message.startswith(("Rate limited", "Network error"))
 
 
 def route_items(items, checker):
@@ -1147,11 +1211,13 @@ class ServiceTab(Gtk.Box):
         dlg.destroy()
         self.add_items(paths)
 
-    def add_items(self, items, after=None):
+    def add_items(self, items, after=None, attempt=1):
         """Add magnets, links and .torrent paths sequentially in one worker; report counts in the status line.
-        after(added_labels, errors) runs on the main loop when done."""
+        after(added_labels, errors) runs on the main loop when done. Rate-limit and network failures are retried
+        every 60 s, three times."""
         if not items or self.client is None:
             return
+        retry = []
 
         def work():
             added, urls, errors = [], [], []
@@ -1160,6 +1226,8 @@ class ServiceTab(Gtk.Box):
                     url = add_one(self.client, item)
                 except ApiError as e:
                     errors.append(f"{add_label(item)}: {e}")
+                    if retryable(str(e)):
+                        retry.append(item)
                     continue
                 except OSError as e:  # unreadable .torrent path
                     errors.append(f"{add_label(item)}: {e.strerror or e}")
@@ -1181,6 +1249,9 @@ class ServiceTab(Gtk.Box):
             msg = f"Added {len(added)}" + (", direct link(s) copied" if urls else "")
             if errors:
                 msg += " · failed: " + "; ".join(errors)
+            if retry and attempt < 3:
+                msg += f" · retrying {len(retry)} in 60 s ({attempt}/3)"
+                GLib.timeout_add_seconds(60, lambda: self.add_items(list(retry), None, attempt + 1) and False)
             self.say(msg, error=bool(errors))
             for name in added:  # show something at once; the real row replaces it on the next poll
                 self._pending.append((time.monotonic() + 30, {
@@ -1913,8 +1984,12 @@ class App:
                            ("auto_download", "Download finished items automatically (aria2c, else wget)"),
                            ("auto_download_videos_only", "    …video files only"),
                            ("delete_after_download", "    …then delete the item from the service"),
-                           ("stop_seeding_when_done", "Torbox: stop seeding as soon as an item finishes")):
+                           ("stop_seeding_when_done", "Torbox: stop seeding as soon as an item finishes"),
+                           ("keys_in_keyring", "Store API keys in the system keyring instead of config.json")):
             check = Gtk.CheckButton(label=label, active=bool(self.cfg.get(key)))
+            if key == "keys_in_keyring" and Secret is None:
+                check.set_sensitive(False)
+                check.set_tooltip_text("libsecret (gir1.2-secret-1) is not installed")
             grid.attach(check, 0, row, 2, 1)
             checks[key] = check
             row += 1
