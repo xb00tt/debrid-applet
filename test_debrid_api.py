@@ -272,6 +272,24 @@ def test_tb_bad_token_is_invalid_key():
         assert str(e) == "Invalid API key"
 
 
+def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
+    import os
+    import shutil
+    import stat
+    import debrid_applet
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    debrid_applet.CONFIG_DIR = tmp_dir
+    debrid_applet.CONFIG = os.path.join(tmp_dir, "config.json")
+    assert debrid_applet.load_config() == {"torbox_key": "", "realdebrid_key": ""}
+    debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b"})
+    assert stat.S_IMODE(os.stat(debrid_applet.CONFIG).st_mode) == 0o600
+    assert stat.S_IMODE(os.stat(tmp_dir).st_mode) == 0o700
+    assert debrid_applet.load_config() == {"torbox_key": "a", "realdebrid_key": "b"}
+    with open(debrid_applet.CONFIG, "w") as f:
+        f.write("{not json")
+    assert debrid_applet.load_config() == {"torbox_key": "", "realdebrid_key": ""}
+
+
 if __name__ == "__main__":
     import sys
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
