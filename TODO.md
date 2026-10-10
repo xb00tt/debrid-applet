@@ -5,7 +5,7 @@ Built so far: everything from the UX review, three services verified live, and t
 
 Open notes:
 
-- Accounts page could state where each key currently lives (file or keyring) and confirm before moving them.
+- Keyring storage for API keys was removed after it lost keys twice on this machine; if it comes back it needs a cross-restart verification step before the file copy is dropped.
 
 - Another service (Premiumize etc.): recipe in the README's Dev section; only with an account to test against.
 - AllDebrid hoster-link unlock: request path verified live; a successful unlock of a real hoster link hasn't been observed yet.

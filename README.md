@@ -24,10 +24,8 @@ is optional and enables **Play**.
 Right-click the tray icon → **Settings…** → paste your API keys
 (from <https://torbox.app/settings>, <https://real-debrid.com/apitoken>, <https://alldebrid.com/apikeys>) → **Test keys** → **Save**.
 Leave a key empty and that tab just says "Not configured".
-Keys are stored in `~/.config/debrid-applet/config.json` with mode 600, or in the system keyring (libsecret)
-if you tick that in Settings; the file copy is only blanked after the keyring hands the key back, and a keyring
-that returns nothing at startup raises a notification instead of silently running without keys. Keys never leave
-your machine except in requests to the services.
+Keys are stored in `~/.config/debrid-applet/config.json` with mode 600 and never leave your machine except in
+requests to the services.
 
 ## Tray icon
 
@@ -141,7 +139,7 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 
 Right-click the tray icon → **Settings…**, or the gear in the toolbar. Four pages:
 
-- **Accounts**: the three API keys with **Test keys**, and whether to keep them in the system keyring.
+- **Accounts**: the three API keys with **Test keys**.
 - **Behaviour**: notifications (added, finished), tab on start-up, clipboard watcher, remembered state filter,
   double-click plays videos, custom play command.
 - **Automation**: watch folder and its target service; RSS feeds and their interval; what happens when an item
@@ -165,9 +163,7 @@ Notifications, clipboard watcher and remembered filter are on by default; everyt
 
 ## Troubleshooting
 
-- **Tabs say "Not configured" after a restart** and you had the keyring option on: the keyring returned nothing
-  (a notification says so). Paste the keys again in Settings → Accounts; the applet keeps them in the file until the
-  keyring confirms it has them.
+- **Tabs say "Not configured"**: open Settings → Accounts and check the keys; Test keys tells you which one fails.
 - **Two tray icons**: one is a leftover from an instance that was killed mid-poll; it disappears on the next restart
   of the applet, or restart Cinnamon (Ctrl+Alt+Esc on Mint).
 - **Window gone**: left-click the tray icon, run the script again, or `--toggle`.

@@ -531,6 +531,7 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
     import shutil
     import stat
     import debrid_applet
+    debrid_applet.Secret = None  # never touch the real keyring from a test
     shutil.rmtree(tmp_dir, ignore_errors=True)
     debrid_applet.CONFIG_DIR = tmp_dir
     debrid_applet.CONFIG = os.path.join(tmp_dir, "config.json")
@@ -540,7 +541,7 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
                 "watch_dir": "", "watch_service": "Torbox", "auto_download": False, "download_dir": "~/Downloads",
                 "http_port": 0, "http_token": "", "notified_expiry": {}, "log_level": "actions", "log_max_kb": 1000,
                 "stop_seeding_when_done": False, "auto_download_videos_only": False, "delete_after_download": False,
-                "route_cached": False, "keys_in_keyring": False, "config_version": 2,
+                "route_cached": False, "config_version": 2,
                 "feeds": "", "feed_interval_min": 15, "feed_seen": [], "player_command": "", "start_tab": "All"}
     assert debrid_applet.load_config() == defaults
     debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b", "notify_done": False})
@@ -855,42 +856,6 @@ def test_retryable():
     assert not da.retryable("Invalid magnet") and not da.retryable("Invalid API key")
 
 
-def test_keyring_roundtrip(tmp_dir="/tmp/debrid-test-keyring"):
-    import os, shutil, json
-    import debrid_applet as da
-    shutil.rmtree(tmp_dir, ignore_errors=True)
-    da.CONFIG_DIR = tmp_dir
-    da.CONFIG = os.path.join(tmp_dir, "config.json")
-    store = {}
-    da.Secret = object()  # pretend libsecret is available
-    da.keyring_store = lambda name, value: store.__setitem__(name, value)
-    da.keyring_lookup = lambda name: store.get(name, "")
-    da.keyring_clear = lambda name: store.pop(name, None)
-    da.save_config({"torbox_key": "tb", "realdebrid_key": "", "keys_in_keyring": True})
-    on_disk = json.load(open(da.CONFIG))
-    assert on_disk["torbox_key"] == "" and on_disk["keys_in_keyring"] is True and store == {"torbox_key": "tb"}
-    assert da.load_config()["torbox_key"] == "tb"
-    da.save_config({"torbox_key": "tb", "realdebrid_key": "", "keys_in_keyring": False})
-    assert json.load(open(da.CONFIG))["torbox_key"] == "tb" and store == {}
-    # a store whose read-back fails must leave the key in the file
-    da.save_config({"torbox_key": "tb2", "realdebrid_key": "", "keys_in_keyring": True})
-    da.keyring_lookup = lambda name: ""
-    da.save_config({"torbox_key": "tb3", "realdebrid_key": "", "keys_in_keyring": True})
-    assert json.load(open(da.CONFIG))["torbox_key"] == "tb3"
-    # turning the option off with EMPTY keys in memory must not wipe the keyring (that is how keys got lost once)
-    store["realdebrid_key"] = "rd"
-    da.keyring_lookup = lambda name: store.get(name, "")
-    da.save_config({"torbox_key": "", "realdebrid_key": "", "keys_in_keyring": False})
-    assert store == {"torbox_key": "tb3", "realdebrid_key": "rd"}
-    # loading with the flag on but nothing retrievable reports it instead of silently going empty
-    store.clear()
-    da.save_config({"torbox_key": "", "realdebrid_key": "", "keys_in_keyring": True})
-    cfg = da.load_config()
-    assert cfg["torbox_key"] == "" and cfg.get("_keyring_problem")
-    da.Secret = None
-    assert "_keyring_problem" not in da.load_config()
-
-
 def test_config_migration():
     import debrid_applet as da
     old = {"torbox_key": "x", "columns": {"order": ["name"], "hidden": ["ul"]}}  # as written by version 1
@@ -899,6 +864,7 @@ def test_config_migration():
     assert cfg["columns"]["Torbox"]["hidden"] == ["ul"] and cfg["columns"]["Real-Debrid"]["order"] == ["name"]
     assert da.migrate_config({})["config_version"] == 2
     assert da.migrate_config({"config_version": 2, "columns": {}})["columns"] == {}
+    assert "keys_in_keyring" not in da.migrate_config({"keys_in_keyring": True})
 
 
 FEED_XML = """<?xml version="1.0"?><rss version="2.0"><channel><title>t</title>

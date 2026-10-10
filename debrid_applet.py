@@ -69,7 +69,6 @@ EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "no
                 "stop_seeding_when_done": False,  # Torbox: send stop_seeding as soon as an item finishes
                 "auto_download_videos_only": False, "delete_after_download": False,  # auto-download rules
                 "route_cached": False,  # Add box: send magnets Torbox already has to Torbox
-                "keys_in_keyring": False,  # keep API keys in the system keyring instead of config.json
                 "feeds": "", "feed_interval_min": 15, "feed_seen": [],  # RSS: "url | regex | service" lines
                 "player_command": "",  # custom Play target, e.g. "stremio {url}" or "kodi-send --action=PlayMedia({url})"
                 "start_tab": "All",  # tab shown when the window opens
@@ -80,20 +79,27 @@ INVALID_KEY = "Invalid API key"
 
 
 KEY_FIELDS = ("torbox_key", "realdebrid_key", "alldebrid_key")
-SECRET_SCHEMA = (Secret.Schema.new("io.github.xb00tt.DebridApplet", Secret.SchemaFlags.NONE,
-                                   {"key": Secret.SchemaAttributeType.STRING}) if Secret else None)
 
 
-def keyring_store(name, value):
-    Secret.password_store_sync(SECRET_SCHEMA, {"key": name}, Secret.COLLECTION_DEFAULT, f"Debrid applet {name}", value, None)
-
-
-def keyring_lookup(name):
-    return Secret.password_lookup_sync(SECRET_SCHEMA, {"key": name}, None) or ""
-
-
-def keyring_clear(name):
-    Secret.password_clear_sync(SECRET_SCHEMA, {"key": name}, None)
+def _import_keys_from_keyring(cfg):
+    """One-time transition from the removed keyring option: copy any key the keyring still holds into the file
+    and delete it there. Silently does nothing without libsecret or without entries."""
+    if not Secret:
+        return False
+    try:
+        schema = Secret.Schema.new("io.github.xb00tt.DebridApplet", Secret.SchemaFlags.NONE,
+                                   {"key": Secret.SchemaAttributeType.STRING})
+        moved = False
+        for name in KEY_FIELDS:
+            value = Secret.password_lookup_sync(schema, {"key": name}, None)
+            if value:
+                if not cfg.get(name):
+                    cfg[name] = value
+                    moved = True
+                Secret.password_clear_sync(schema, {"key": name}, None)
+        return moved
+    except GLib.Error:
+        return False
 
 
 def migrate_config(cfg):
@@ -104,6 +110,7 @@ def migrate_config(cfg):
         for name in SERVICES:
             column_layout(cols, name)
         cfg["columns"] = cols
+    cfg.pop("keys_in_keyring", None)  # option removed
     cfg["config_version"] = EMPTY_CONFIG["config_version"]
     return cfg
 
@@ -114,38 +121,14 @@ def load_config():
             cfg = {**EMPTY_CONFIG, **migrate_config(json.load(f))}
     except (OSError, ValueError):
         return dict(EMPTY_CONFIG)
-    if cfg.get("keys_in_keyring") and Secret:
-        failed = False
-        for name in KEY_FIELDS:
-            if not cfg.get(name):
-                try:
-                    cfg[name] = keyring_lookup(name)
-                except GLib.Error:
-                    failed = True
-        if failed or not any(cfg.get(n) for n in KEY_FIELDS):
-            cfg["_keyring_problem"] = True  # in-memory flag only: the keyring gave nothing back
+    if _import_keys_from_keyring(cfg):
+        save_config(cfg)
     return cfg
 
 
 def save_config(cfg):
-    """Write config.json (0600). With keys_in_keyring the API keys go to libsecret and the file keeps blanks."""
+    """Write config.json with mode 600 in a 700 directory. Keys are kept here and nowhere else."""
     on_disk = {k: v for k, v in cfg.items() if not k.startswith("_")}
-    if cfg.get("keys_in_keyring") and Secret:
-        for name in KEY_FIELDS:
-            if cfg.get(name):
-                try:  # blank the file copy only once the keyring hands the same value back
-                    keyring_store(name, cfg[name])
-                    if keyring_lookup(name) == cfg[name]:
-                        on_disk[name] = ""
-                except GLib.Error:
-                    pass  # keyring unavailable: keep it in the file rather than lose it
-    elif Secret:
-        for name in KEY_FIELDS:
-            if cfg.get(name):  # only drop a keyring entry when the same key is being written to the file
-                try:
-                    keyring_clear(name)
-                except GLib.Error:
-                    pass
     os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
     os.chmod(CONFIG_DIR, 0o700)
     fd = os.open(CONFIG, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -1834,9 +1817,6 @@ class App:
         self.window.add(self.notebook)
         self.build_tabs()
 
-        if self.cfg.pop("_keyring_problem", False):
-            notify("API keys not found in the keyring",
-                   "Settings → Accounts: paste the keys again. They are kept in the file until the keyring is confirmed.")
         if not any(self.cfg[k] for k in ("torbox_key", "realdebrid_key", "alldebrid_key")):
             self.open_settings()
         self.refresh()  # every poll schedules the next one (see _schedule)
@@ -2204,11 +2184,8 @@ class SettingsForm:
         test.set_halign(Gtk.Align.START)
         g.attach(test, 1, g._row, 1, 1)
         g._row += 1
-        result = self._note(g, "Keys stay on this machine: config.json (mode 600) or the system keyring.")
+        result = self._note(g, "Keys stay on this machine in ~/.config/debrid-applet/config.json (mode 600).")
         test.connect("clicked", lambda _b: self.test_keys(result))
-        self._heading(g, "Storage")
-        self._check(g, "keys_in_keyring", "Store API keys in the system keyring instead of config.json",
-                    tooltip="" if Secret else "libsecret (gir1.2-secret-1) is not installed", sensitive=Secret is not None)
 
     def _behaviour(self):
         g = self._page("Behaviour")
