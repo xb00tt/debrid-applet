@@ -35,7 +35,8 @@ CONFIG = os.path.join(CONFIG_DIR, "config.json")
 EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "notify_added": True, "notify_done": True,
                 "watch_clipboard": True, "columns": {}, "window": [],  # columns: per-service, see column_layout()
                 "remember_filter": True, "filters": {},  # filters: last state-filter choice per service
-                "dblclick_play": False}  # double-click plays videos instead of opening the file panel
+                "dblclick_play": False,  # double-click plays videos instead of opening the file panel
+                "dblclick_asked": False}  # the one-time offer to turn dblclick_play on has been shown
 POLL_FAST, POLL_SLOW = 8, 60  # seconds between polls while something is active / when everything is idle
 INVALID_KEY = "Invalid API key"
 
@@ -868,24 +869,45 @@ class ServiceTab(Gtk.Box):
         self._run(lambda: self.client.links(t["id"], t["kind"]), pick)
 
     def on_row_activated(self, *_):
-        """Double-click: the file panel, or (if enabled in Settings) play when the item has video files."""
+        """Double-click: the file panel, or (if enabled in Settings) play when the item has video files.
+        The first time a double-clicked item has videos and a player exists, offer to turn that on."""
         targets = self._targets()
         if len(targets) != 1:
             return
         t = targets[0]
-        if not (self.app.cfg.get("dblclick_play") and self.app.player):
-            self.open_files_for(t)
-            return
+        cfg = self.app.cfg
 
         def decide(links, err):
             if err:
                 return
-            vids = strict_videos(links)
-            if vids:
+            vids = strict_videos(links) if self.app.player else []
+            if vids and cfg.get("dblclick_play"):
                 self._play_one_of(vids)
+            elif vids and not cfg.get("dblclick_asked"):
+                self._offer_dblclick_play(t, links, vids)
             else:
                 self._files_dialog(t, links)
         self._run(lambda: self.client.links(t["id"], t["kind"]), decide)
+
+    def _offer_dblclick_play(self, t, links, vids):
+        """One-time question; either answer is remembered and can be changed in Settings."""
+        dlg = Gtk.MessageDialog(transient_for=self.app.window, modal=True, message_type=Gtk.MessageType.QUESTION,
+                                text="Play videos on double-click?")
+        dlg.format_secondary_text(
+            f"This item has video files and {self.app.player} is installed.\n"
+            "Double-click can play them straight away instead of opening the file panel.\n\n"
+            "You can change this any time in Settings. This question is shown only once.")
+        dlg.add_buttons("Open Files", Gtk.ResponseType.NO, "Play on double-click", Gtk.ResponseType.YES)
+        dlg.set_default_response(Gtk.ResponseType.YES)
+        answer = dlg.run()
+        dlg.destroy()
+        self.app.cfg["dblclick_asked"] = True
+        self.app.cfg["dblclick_play"] = answer == Gtk.ResponseType.YES
+        save_config(self.app.cfg)
+        if answer == Gtk.ResponseType.YES:
+            self._play_one_of(vids)
+        else:
+            self._files_dialog(t, links)
 
     def play(self, url):
         if not self.app.player:

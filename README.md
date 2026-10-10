@@ -79,7 +79,7 @@ Right-click the tray icon → **Settings…**, or the gear in the toolbar.
   notification carries an **Open files** button).
 - Watch clipboard for magnet links.
 - Remember the state filter between runs.
-- Double-click plays videos (otherwise opens Files). Off by default; when on, items without video files still open Files.
+- Double-click plays videos (otherwise opens Files). Off by default; the first time you double-click an item with video files the applet asks once whether to turn it on. When on, items without video files still open Files.
 
 The first four toggles are on by default.
 
