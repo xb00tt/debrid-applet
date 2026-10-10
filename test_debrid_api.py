@@ -911,7 +911,14 @@ def test_fetch_bytes_guards():
     os.makedirs(root, exist_ok=True)
     open(os.path.join(root, "small.torrent"), "wb").write(b"d8:announce0:e")
     open(os.path.join(root, "big.bin"), "wb").write(b"x" * 300_000)
-    handler = lambda *a, **k: http.server.SimpleHTTPRequestHandler(*a, directory=root, **k)
+    class Quiet(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, *_): pass
+        def copyfile(self, source, outputfile):
+            try:
+                super().copyfile(source, outputfile)
+            except BrokenPipeError:  # the client aborts the oversized download on purpose
+                pass
+    handler = lambda *a, **k: Quiet(*a, directory=root, **k)
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{srv.server_address[1]}"
