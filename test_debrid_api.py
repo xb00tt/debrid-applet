@@ -280,6 +280,19 @@ def test_tb_delete_routes_on_kind():
     assert s.calls[1][2]["json"] == {"webdl_id": 3, "operation": "delete"}
 
 
+def test_tb_control_ops():
+    s = FakeSession(ok(None), ok(None), ok(None))
+    tb = Torbox("t", s)
+    tb.control("7", "pause")
+    tb.control("7", "reannounce", "torrent")
+    tb.control("3", "resume", "webdl")
+    assert s.calls[0][:2] == ("POST", TB + "/torrents/controltorrent")
+    assert s.calls[0][2]["json"] == {"torrent_id": 7, "operation": "pause"}
+    assert s.calls[1][2]["json"] == {"torrent_id": 7, "operation": "reannounce"}
+    assert s.calls[2][:2] == ("POST", TB + "/webdl/controlwebdownload")
+    assert s.calls[2][2]["json"] == {"webdl_id": 3, "operation": "resume"}
+
+
 def test_tb_links_zip_then_per_file():
     s = FakeSession(
         ok({"id": 7, "size": 1500, "files": [{"id": 0, "name": "dir/a.mkv", "short_name": "a.mkv", "size": 1400},
@@ -520,6 +533,13 @@ def test_column_layout_per_tab_and_migration():
     assert debrid_applet.column_layout(fresh, "Real-Debrid") == {"order": [], "hidden": ["ul", "peers", "ratio"]}
     assert debrid_applet.column_layout(fresh, "Torbox") == {"order": [], "hidden": []}
     assert set(fresh) == {"Torbox", "Real-Debrid"}
+
+
+def test_aria2_command():
+    import debrid_applet
+    cmd = debrid_applet.aria2_command(["https://cdn/a b.mkv", "https://cdn/c"], "/home/u/Downloads")
+    assert cmd == "aria2c -c -x 8 -s 8 --dir=/home/u/Downloads 'https://cdn/a b.mkv' https://cdn/c"
+    assert debrid_applet.aria2_command([], "/x") == ""
 
 
 def test_add_label():

@@ -2,6 +2,7 @@
 """Tray control panel for Torbox and Real-Debrid."""
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -131,6 +132,13 @@ def drop_items(uris, text):
                 out.append(u)
         return out
     return [line.strip() for line in (text or "").splitlines() if line.strip()]
+
+
+def aria2_command(urls, dest):
+    """Shell command that downloads the URLs with aria2c, resumable, 8 connections each."""
+    if not urls:
+        return ""
+    return f"aria2c -c -x 8 -s 8 --dir={shlex.quote(dest)} " + " ".join(shlex.quote(u) for u in urls)
 
 
 def icon_button(icon, tip, cb):
@@ -753,13 +761,18 @@ class ServiceTab(Gtk.Box):
         if not any(r[CHECKED] for r in self.store):
             view.get_selection().select_path(hit[0])
         n = len(self._targets())
+        entries = [("Play", self.on_play, n == 1 and bool(self.app.player)),
+                   ("Files…", self.on_files, n == 1),
+                   ("Copy links", self.on_copy_links, n >= 1),
+                   ("Copy magnet", self.on_copy_magnet, n >= 1),
+                   ("Copy as aria2c command", self.on_copy_aria2, n >= 1)]
+        if hasattr(self.client, "control"):
+            entries += [(None, None, True)] + [(label, lambda _w, op=op: self.on_control(op), n >= 1)
+                                               for label, op in (("Pause", "pause"), ("Resume", "resume"),
+                                                                 ("Reannounce", "reannounce"))]
+        entries += [(None, None, True), ("Delete", self.on_delete, n >= 1)]
         menu = Gtk.Menu()
-        for label, cb, ok in (("Play", self.on_play, n == 1 and bool(self.app.player)),
-                              ("Files…", self.on_files, n == 1),
-                              ("Copy links", self.on_copy_links, n >= 1),
-                              ("Copy magnet", self.on_copy_magnet, n >= 1),
-                              (None, None, True),
-                              ("Delete", self.on_delete, n >= 1)):
+        for label, cb, ok in entries:
             if label is None:
                 menu.append(Gtk.SeparatorMenuItem())
                 continue
@@ -861,9 +874,15 @@ class ServiceTab(Gtk.Box):
             self.say(f"Copied {len(urls)} link(s)")
 
         actions = Gtk.Box(spacing=6)
+        def copy_aria2():
+            urls = chosen()
+            copy_text(aria2_command(urls, os.path.expanduser("~/Downloads")))
+            self.say(f"aria2c command for {len(urls)} file(s) copied")
+
         for icon, label, cb in (("web-browser-symbolic", "Open in browser", lambda: [open_url(u) for u in chosen()]),
                                 ("media-playback-start-symbolic", "Play", lambda: chosen() and self.play(chosen()[0])),
-                                ("edit-copy-symbolic", "Copy links", copy)):
+                                ("edit-copy-symbolic", "Copy links", copy),
+                                ("utilities-terminal-symbolic", "aria2c command", copy_aria2)):
             actions.pack_start(text_button(icon, label, lambda _b, cb=cb: cb()), False, False, 0)
         box.pack_start(actions, False, False, 0)
         dlg.add_button("Close", Gtk.ResponseType.CLOSE)
@@ -871,7 +890,8 @@ class ServiceTab(Gtk.Box):
         view.connect("row-activated", lambda v, path, _c: self.play(store[path][3]) if self.app.player else open_url(store[path][3]))
         dlg.show_all()
 
-    def on_copy_links(self, _btn):
+    def _collect_links(self, done):
+        """Fetch every file URL of all targets, then done(urls, errors)."""
         targets = self._targets()
         if not targets:
             return
@@ -880,19 +900,53 @@ class ServiceTab(Gtk.Box):
             urls, errors = [], []
             for t in targets:
                 for link in self.client.links(t["id"], t["kind"]):
+                    if link["name"].startswith("All files"):
+                        continue
                     (urls if link["url"] else errors).append(link["url"] or link["name"])
             return urls, errors
+        self._run(work, lambda res, err: None if err else done(*res))
 
-        def done(res, err):
-            if err:
-                return
-            urls, errors = res
+    def on_copy_links(self, _btn):
+        def done(urls, errors):
             if urls:
                 copy_text("\n".join(urls))
             msg = f"Copied {len(urls)} link(s)" if urls else "No links yet (not finished?)"
             if errors:
                 msg += " · " + "; ".join(errors)
             self.say(msg, error=bool(errors))
+        self._collect_links(done)
+
+    def on_copy_aria2(self, _w):
+        def done(urls, errors):
+            if urls:
+                copy_text(aria2_command(urls, os.path.expanduser("~/Downloads")))
+            msg = f"aria2c command for {len(urls)} file(s) copied" if urls else "No links yet (not finished?)"
+            if errors:
+                msg += " · " + "; ".join(errors)
+            self.say(msg, error=bool(errors))
+        self._collect_links(done)
+
+    def on_control(self, op):
+        """Torbox pause / resume / reannounce on every target."""
+        targets = self._targets()
+        if not targets:
+            return
+
+        def work():
+            errors = []
+            for t in targets:
+                try:
+                    self.client.control(t["id"], op, t["kind"])
+                except ApiError as e:
+                    errors.append(f"{t['name'][:40]}: {e}")
+            return errors
+
+        def done(errors, err):
+            if err:
+                return
+            self.say(f"{op.capitalize()}: {len(targets) - len(errors)} ok" + (" · " + "; ".join(errors) if errors else ""),
+                     error=bool(errors))
+            self.app.refresh()
         self._run(work, done)
 
     def on_delete(self, _btn):
