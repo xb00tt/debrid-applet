@@ -439,6 +439,28 @@ def test_state_kind_buckets():
     assert set(debrid_applet.PALETTE) == {"active", "done", "seed", "warn", "error"}
 
 
+def test_relative_time():
+    from datetime import datetime, timezone, timedelta
+    import debrid_applet
+    now = datetime(2026, 10, 10, 20, 0, tzinfo=timezone.utc)
+    def rel(**delta):
+        return debrid_applet.relative_time((now - timedelta(**delta)).strftime("%Y-%m-%dT%H:%M:%SZ"), now)
+    assert rel(seconds=10) == "just now"
+    assert rel(minutes=1) == "1 minute ago"
+    assert rel(minutes=2) == "2 minutes ago"
+    assert rel(minutes=59) == "59 minutes ago"
+    assert rel(hours=1) == "1 hour ago"
+    assert rel(hours=12) == "12 hours ago"
+    assert rel(hours=30) == "yesterday"
+    assert rel(days=3) == "3 days ago"
+    assert rel(days=9) == "1 week ago"
+    assert rel(days=20) == "2 weeks ago"
+    assert rel(days=70) == "2 months ago"
+    assert rel(days=800) == "2 years ago"
+    assert debrid_applet.relative_time("", now) == "" and debrid_applet.relative_time("junk", now) == ""
+    assert debrid_applet.relative_time((now + timedelta(minutes=5)).isoformat(), now) == "just now"
+
+
 def test_add_label():
     import debrid_applet
     assert debrid_applet.add_label("magnet:?xt=urn:btih:abc&dn=Some+Name+S01") == "Some Name S01"

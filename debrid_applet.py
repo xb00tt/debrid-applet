@@ -121,15 +121,45 @@ def notify(title, body):
 
 def local_time(iso):
     """'2026-10-10T19:52:35.000Z' (UTC) -> '2026-10-10 21:52' in the local zone; '' when absent or odd."""
-    if not iso:
-        return ""
+    dt = _parse_iso(iso) if iso else None
+    return dt.astimezone().strftime("%Y-%m-%d %H:%M") if dt else ""
+
+
+def _parse_iso(iso):
     try:
         dt = datetime.fromisoformat(iso)
-    except ValueError:
+    except (TypeError, ValueError):
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _plural(n, word):
+    return f"{n} {word}{'' if n == 1 else 's'} ago"
+
+
+def relative_time(iso, now=None):
+    """'2 minutes ago', '12 hours ago', 'yesterday', '3 days ago', '2 weeks ago', '2 months ago', '2 years ago'."""
+    dt = _parse_iso(iso) if iso else None
+    if dt is None:
         return ""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone().strftime("%Y-%m-%d %H:%M")
+    now = now or datetime.now(timezone.utc)
+    s = max(0, (now - dt).total_seconds())
+    if s < 45:
+        return "just now"
+    if s < 3600:
+        return _plural(max(1, round(s / 60)), "minute")
+    if s < 86400:
+        return _plural(max(1, round(s / 3600)), "hour")
+    days = (now.astimezone().date() - dt.astimezone().date()).days
+    if days <= 1:
+        return "yesterday"
+    if days < 7:
+        return _plural(days, "day")
+    if days < 30:
+        return _plural(days // 7, "week")
+    if days < 365:
+        return _plural(days // 30, "month")
+    return _plural(days // 365, "year")
 
 
 def fmt_speed(n):
@@ -156,12 +186,14 @@ COLUMNS = (
     ("ratio", "Ratio", 11, "text", 19),
     ("state", "State", 3, "text", 3),
     ("size", "Size", 4, "text", 14),
-    ("added", "Added", 12, "text", 12),
-    ("finished", "Finished", 13, "text", 13),
+    ("added", "Added", 12, "text", 20),
+    ("finished", "Finished", 13, "text", 21),
 )
+ABSOLUTE = {"added": 20, "finished": 21}  # store columns holding the full local time for the tooltip
 STORE_TYPES = (str, str, int, str, str, str, bool,  # 0 id, 1 name, 2 progress, 3 state, 4 size, 5 kind, 6 checked
                str, str, str, str, str, str, str,   # 7 dl, 8 ul, 9 seeds, 10 peers, 11 ratio, 12 added, 13 finished
-               float, float, float, int, int, float)  # 14 size, 15 dl, 16 ul, 17 seeds, 18 peers, 19 ratio (raw)
+               float, float, float, int, int, float,  # 14 size, 15 dl, 16 ul, 17 seeds, 18 peers, 19 ratio (raw)
+               str, str)  # 20 added, 21 finished (absolute local time)
 CHECKED, STATUS_HOLD = 6, 8
 NUMERIC = ("dl", "ul", "seeds", "peers", "ratio", "size")  # right-aligned
 PALETTE = {"active": "#3b82f6", "done": "#22c55e", "seed": "#14b8a6", "warn": "#f59e0b", "error": "#ef4444"}
@@ -263,6 +295,8 @@ class ServiceTab(Gtk.Box):
             col.get_button().connect("button-press-event", self.on_header_press)
             self.cols[key] = col
         self.apply_columns()
+        self.view.set_has_tooltip(True)
+        self.view.connect("query-tooltip", self.on_query_tooltip)
         self.view.connect("columns-changed", self.on_columns_changed)
         self.store.connect("sort-column-changed", self.on_sort_changed)
         scroller = Gtk.ScrolledWindow(vexpand=True)
@@ -309,6 +343,23 @@ class ServiceTab(Gtk.Box):
         key = next((k for k, _t, _i, _k, s in COLUMNS if s == idx), None)
         if ok and key:
             self.app.set_columns(sort=[key, "desc" if direction == Gtk.SortType.DESCENDING else "asc"])
+
+    def on_query_tooltip(self, view, x, y, keyboard, tooltip):
+        """Hovering a relative date shows the full local time."""
+        if keyboard:
+            return False
+        hit = view.get_path_at_pos(*view.convert_widget_to_bin_window_coords(x, y))
+        if not hit:
+            return False
+        path, col = hit[0], hit[1]
+        key = next((k for k, c in self.cols.items() if c is col), None)
+        idx = ABSOLUTE.get(key)
+        text = self.store[path][idx] if idx is not None else ""
+        if not text:
+            return False
+        tooltip.set_text(text)
+        view.set_tooltip_cell(tooltip, path, col, None)
+        return True
 
     def on_header_press(self, _btn, event):
         if event.button != 3:
@@ -442,10 +493,11 @@ class ServiceTab(Gtk.Box):
                 t["id"], t["name"], int(max(0, min(100, t["progress"]))), t["state"], human_size(t["size"]), t["kind"],
                 t["id"] in self.checked,
                 fmt_speed(t["speed"]), fmt_speed(t["up_speed"]), str(t["seeds"]), na(t["peers"]), na(t["ratio"], "{:.2f}"),
-                local_time(t["added"]), local_time(t["finished"]),
+                relative_time(t["added"]), relative_time(t["finished"]),
                 float(t["size"]), float(t["speed"] or 0), float(t["up_speed"] or -1),
                 int(t["seeds"]), -1 if t["peers"] is None else int(t["peers"]),
                 -1.0 if t["ratio"] is None else float(t["ratio"]),
+                local_time(t["added"]), local_time(t["finished"]),
             ])
         if selected:
             for row in self.store:
