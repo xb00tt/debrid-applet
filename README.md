@@ -123,6 +123,7 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
       python3 ~/.local/share/debrid-applet/debrid_applet.py --toggle
       python3 ~/.local/share/debrid-applet/debrid_applet.py --log
       python3 ~/.local/share/debrid-applet/debrid_applet.py --service Torbox --add 'magnet:?xt=…' 'https://hoster/file'
+      debrid-applet --version          # (the .deb puts `debrid-applet` on PATH; 1.0.0 hangs here while running, fixed after)
 
   Without `--service`, cached-on-Torbox routing applies. Bind `--toggle` to a Cinnamon keyboard shortcut for a global hotkey.
 - **Send to.** Right-click → Send to → another service re-adds the ticked items there by magnet (not from AllDebrid, which gives no hashes).
