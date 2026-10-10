@@ -379,7 +379,7 @@ class ServiceTab(Gtk.Box):
         return True
 
     def _style_cell(self, _col, cell, model, it, key):
-        """Zebra rows, state colored by kind, finished names dimmed. Selected rows keep the theme's look."""
+        """Zebra rows, state colored by kind, active names bold. Selected rows keep the theme's look."""
         if self.view.get_selection().iter_is_selected(it):
             cell.set_property("cell-background-set", False)
             cell.set_property("foreground-set", False)
@@ -390,9 +390,11 @@ class ServiceTab(Gtk.Box):
         kind = state_kind(model[it][3])
         if key == "state":
             cell.set_property("foreground", PALETTE[kind])
+        elif key == "name":
+            cell.set_property("foreground-rgba", fg)
+            cell.set_property("weight", Pango.Weight.BOLD if kind == "active" else Pango.Weight.NORMAL)
         else:
-            dim = key == "name" and kind in ("done", "seed")
-            cell.set_property("foreground-rgba", Gdk.RGBA(fg.red, fg.green, fg.blue, 0.55 if dim else 0.85))
+            cell.set_property("foreground-rgba", Gdk.RGBA(fg.red, fg.green, fg.blue, 0.9))
 
     # ----- checkboxes and targets -----
     def on_toggled(self, _rend, path):
