@@ -889,6 +889,7 @@ class ServiceTab(Gtk.Box):
         dlg.connect("response", lambda d, _r: d.destroy())
         view.connect("row-activated", lambda v, path, _c: self.play(store[path][3]) if self.app.player else open_url(store[path][3]))
         dlg.show_all()
+        self.say(f"{len(links)} file(s)")
 
     def _collect_links(self, done):
         """Fetch every file URL of all targets, then done(urls, errors)."""
@@ -979,6 +980,8 @@ class ServiceTab(Gtk.Box):
             self.checked -= {t["id"] for t in targets}
             if errors:
                 self.say("Delete failed: " + "; ".join(errors), error=True)
+            else:
+                self.say(f"Deleted {len(targets)}")
             self.app.refresh()
         self._run(work, done)
 
