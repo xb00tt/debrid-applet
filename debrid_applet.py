@@ -195,6 +195,7 @@ class ServiceTab(Gtk.Box):
         self.name, self.client, self.app = name, client, app
         self.done_ids = None  # None until first successful poll; then set of finished ids
         self.checked = set()  # ids with the checkbox on; survives refreshes
+        self.torrents = []  # last poll, re-filtered on every keystroke
         self.active = 0
         self._is_busy = False
         self._applying = True  # suppress columns-changed while we build or restore the layout
@@ -213,6 +214,10 @@ class ServiceTab(Gtk.Box):
         self.del_btn = text_button("user-trash-symbolic", "Delete", self.on_delete)
         for b in (self.del_btn, self.copy_btn, self.links_btn):  # pack_end: last packed ends up leftmost
             row.pack_end(b, False, False, 0)
+        self.search = Gtk.SearchEntry(placeholder_text="Filter", width_chars=30)
+        self.search.connect("changed", lambda _e: self._fill())
+        self.search.connect("stop-search", lambda e: e.set_text(""))  # Escape clears
+        row.set_center_widget(self.search)
         self.pack_start(row, False, False, 0)
 
         self.store = Gtk.ListStore(*STORE_TYPES)
@@ -398,10 +403,28 @@ class ServiceTab(Gtk.Box):
             return
         self.account_label.set_text(
             f"{account['plan']} · expires {account['expires'] or '—'} · {account['extra']}")
-        selected = self._selected()
+        self.torrents = torrents
         self.checked &= {t["id"] for t in torrents}
+        self._fill()
+        self.active = sum(1 for t in torrents if not t["done"])
+        if time.monotonic() >= self._hold_until:
+            self.status.set_text(f"Updated {time.strftime('%H:%M:%S')} · {self.active} active")
+
+        prev = self.done_ids
+        self.done_ids = {t["id"] for t in torrents if t["done"]}
+        if prev is not None and self.app.cfg["notify_done"]:
+            for t in torrents:
+                if t["done"] and t["id"] not in prev:
+                    notify(f"{self.name}: finished", t["name"])
+
+    def _fill(self):
+        """Rebuild the list from the last poll, keeping rows whose name or state matches the filter box."""
+        q = self.search.get_text().strip().lower()
+        selected = self._selected()
         self.store.clear()
-        for t in torrents:
+        for t in self.torrents:
+            if q and q not in t["name"].lower() and q not in t["state"].lower():
+                continue
             self.store.append([
                 t["id"], t["name"], int(max(0, min(100, t["progress"]))), t["state"], human_size(t["size"]), t["kind"],
                 t["id"] in self.checked,
@@ -416,16 +439,6 @@ class ServiceTab(Gtk.Box):
                 if row[0] == selected["id"]:
                     self.view.get_selection().select_iter(row.iter)
         self._sync_checks()
-        self.active = sum(1 for t in torrents if not t["done"])
-        if time.monotonic() >= self._hold_until:
-            self.status.set_text(f"Updated {time.strftime('%H:%M:%S')} · {self.active} active")
-
-        prev = self.done_ids
-        self.done_ids = {t["id"] for t in torrents if t["done"]}
-        if prev is not None and self.app.cfg["notify_done"]:
-            for t in torrents:
-                if t["done"] and t["id"] not in prev:
-                    notify(f"{self.name}: finished", t["name"])
 
     # ----- actions -----
     def on_add(self, _w):
