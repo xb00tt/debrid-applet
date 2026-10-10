@@ -89,10 +89,10 @@ def keyring_clear(name):
 
 
 def migrate_config(cfg):
-    """Bring an older config up to the current layout. Each step is idempotent."""
+    """Bring a raw config dict (as read from disk, before defaults) up to the current layout. Idempotent."""
     version = int(cfg.get("config_version") or 1)
-    if version < 2:  # one shared column layout -> one per service
-        cols = cfg.get("columns") or {}
+    cols = cfg.get("columns") or {}
+    if version < 2 and any(k in cols for k in ("order", "hidden", "sort")):  # one shared layout -> one per service
         for name in SERVICES:
             column_layout(cols, name)
         cfg["columns"] = cols
@@ -103,7 +103,7 @@ def migrate_config(cfg):
 def load_config():
     try:
         with open(CONFIG) as f:
-            cfg = migrate_config({**EMPTY_CONFIG, **json.load(f)})
+            cfg = {**EMPTY_CONFIG, **migrate_config(json.load(f))}
     except (OSError, ValueError):
         return dict(EMPTY_CONFIG)
     if cfg.get("keys_in_keyring") and Secret:

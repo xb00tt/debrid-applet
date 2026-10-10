@@ -872,11 +872,12 @@ def test_keyring_roundtrip(tmp_dir="/tmp/debrid-test-keyring"):
 
 def test_config_migration():
     import debrid_applet as da
-    old = {"torbox_key": "x", "columns": {"order": ["name"], "hidden": ["ul"]}}
-    cfg = da.migrate_config(dict(da.EMPTY_CONFIG, **old))
+    old = {"torbox_key": "x", "columns": {"order": ["name"], "hidden": ["ul"]}}  # as written by version 1
+    cfg = da.migrate_config(old)
     assert cfg["config_version"] == 2
     assert cfg["columns"]["Torbox"]["hidden"] == ["ul"] and cfg["columns"]["Real-Debrid"]["order"] == ["name"]
-    assert da.migrate_config(dict(da.EMPTY_CONFIG))["config_version"] == 2
+    assert da.migrate_config({})["config_version"] == 2
+    assert da.migrate_config({"config_version": 2, "columns": {}})["columns"] == {}
 
 
 def test_add_label():
