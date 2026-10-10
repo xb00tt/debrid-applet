@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import secrets
 import shlex
 import shutil
 import subprocess
@@ -45,7 +46,7 @@ EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "no
                 "dblclick_asked": False,  # the one-time offer to turn dblclick_play on has been shown
                 "watch_dir": "", "watch_service": "Torbox",  # .torrent files dropped here get uploaded there
                 "auto_download": False, "download_dir": "~/Downloads",  # finished items -> aria2c/wget into here
-                "http_port": 0,  # loopback API port, 0 = off
+                "http_port": 0, "http_token": "",  # loopback API port (0 = off) and its required token
                 "notified_expiry": {}}  # service -> expiry date already warned about
 POLL_FAST, POLL_SLOW = 8, 60  # seconds between polls while something is active / when everything is idle
 INVALID_KEY = "Invalid API key"
@@ -1240,6 +1241,9 @@ class App:
         port = int(self.cfg.get("http_port") or 0)
         if not port:
             return
+        if not self.cfg.get("http_token"):
+            self.cfg["http_token"] = secrets.token_urlsafe(24)
+            save_config(self.cfg)
 
         def on_add(service, items):
             tab = self.tab_named(service) or next((t for t in self.tabs if t.client), None)
@@ -1251,7 +1255,7 @@ class App:
         def status():
             return {t.name: {"active": t.active, "items": len(t.torrents)} for t in self.tabs if t.client}
         try:
-            self.api = LocalApi(port, on_add, lambda: GLib.idle_add(self.toggle_window), status)
+            self.api = LocalApi(port, self.cfg["http_token"], on_add, lambda: GLib.idle_add(self.toggle_window), status)
             self.api.start()
         except OSError as e:
             self.api = None
@@ -1399,9 +1403,14 @@ class App:
         row += 1
         port = Gtk.SpinButton.new_with_range(0, 65535, 1)
         port.set_value(int(self.cfg.get("http_port") or 0))
-        port.set_tooltip_text("0 = off. Then: curl 'http://127.0.0.1:PORT/add?service=Torbox&magnet=…'")
+        port.set_tooltip_text("0 = off. Every call needs the token below: ?token=… or header X-Debrid-Token")
         grid.attach(Gtk.Label(label="Local API port (0 = off)", xalign=0), 0, row, 1, 1)
         grid.attach(port, 1, row, 1, 1)
+        row += 1
+        token = Gtk.Entry(text=self.cfg.get("http_token") or "(generated when the port is set)", editable=False, width_chars=48)
+        token.set_tooltip_text("Random secret created on first use; delete it from config.json to get a new one")
+        grid.attach(Gtk.Label(label="Local API token", xalign=0), 0, row, 1, 1)
+        grid.attach(token, 1, row, 1, 1)
         row += 1
         for key, label in (("notify_added", "Notify when torrent added"),
                            ("notify_done", "Notify when download finishes on service"),

@@ -507,7 +507,7 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
                 "watch_clipboard": True, "columns": {}, "window": [], "remember_filter": True, "filters": {},
                 "dblclick_play": False, "dblclick_asked": False,
                 "watch_dir": "", "watch_service": "Torbox", "auto_download": False, "download_dir": "~/Downloads",
-                "http_port": 0, "notified_expiry": {}}
+                "http_port": 0, "http_token": "", "notified_expiry": {}}
     assert debrid_applet.load_config() == defaults
     debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b", "notify_done": False})
     assert debrid_applet.column_layout({}, "AllDebrid")["hidden"] == ["peers", "ratio"]
@@ -674,26 +674,35 @@ def test_local_api():
         ("Torbox", ["magnet:?xt=a", "https://h/f", "https://body/1"])
     assert parse_add("", "") == ("", [])
     calls = []
-    api = LocalApi(0, on_add=lambda s, items: calls.append(("add", s, items)) or len(items),
+    api = LocalApi(0, "sekret", on_add=lambda s, items: calls.append(("add", s, items)) or len(items),
                    on_toggle=lambda: calls.append(("toggle",)), status=lambda: {"Torbox": 2})
     api.start()
     base = f"http://127.0.0.1:{api.port}"
-    r = json.loads(urllib.request.urlopen(base + "/add?service=Torbox&magnet=magnet:?xt=urn:btih:abc").read())
-    assert r == {"ok": True, "queued": 1} and calls[-1] == ("add", "Torbox", ["magnet:?xt=urn:btih:abc"])
-    r = json.loads(urllib.request.urlopen(urllib.request.Request(base + "/add?service=AllDebrid", data=b"https://x/1\nhttps://x/2", method="POST")).read())
-    assert r["queued"] == 2 and calls[-1][2] == ["https://x/1", "https://x/2"]
-    assert json.loads(urllib.request.urlopen(base + "/toggle").read()) == {"ok": True} and calls[-1] == ("toggle",)
-    assert json.loads(urllib.request.urlopen(base + "/status").read()) == {"Torbox": 2}
-    try:
-        urllib.request.urlopen(base + "/add")
-        assert False
-    except urllib.error.HTTPError as e:
-        assert e.code == 400
-    try:
-        urllib.request.urlopen(base + "/nope")
-        assert False
-    except urllib.error.HTTPError as e:
-        assert e.code == 404
+
+    def call(path, data=None, headers=None, host=None):
+        req = urllib.request.Request(base + path, data=data, method="POST" if data is not None else "GET",
+                                     headers=headers or {})
+        if host:
+            req.add_unredirected_header("Host", host)
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, json.loads(r.read()), r.headers
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read()), e.headers
+    assert call("/add?magnet=magnet:?xt=a")[0] == 401 and not calls  # no token
+    assert call("/add?magnet=magnet:?xt=a", headers={"X-Debrid-Token": "wrong"})[0] == 401
+    code, body, headers = call("/add?service=Torbox&magnet=magnet:?xt=urn:btih:abc&token=sekret")
+    assert (code, body) == (200, {"ok": True, "queued": 1}) and calls[-1] == ("add", "Torbox", ["magnet:?xt=urn:btih:abc"])
+    assert "Access-Control-Allow-Origin" not in headers
+    code, body, _ = call("/add?service=AllDebrid", data=b"https://x/1\nhttps://x/2", headers={"X-Debrid-Token": "sekret"})
+    assert body["queued"] == 2 and calls[-1][2] == ["https://x/1", "https://x/2"]
+    code, body, _ = call("/add?token=sekret&item=/etc/passwd&magnet=magnet:?xt=b")
+    assert code == 400 and "magnet" in body["error"] and calls[-1][2] == ["magnet:?xt=urn:btih:abc"] or calls[-1][2] == ["https://x/1", "https://x/2"]
+    assert call("/toggle?token=sekret")[1] == {"ok": True} and calls[-1] == ("toggle",)
+    assert call("/status?token=sekret")[1] == {"Torbox": 2}
+    assert call("/add?token=sekret&magnet=magnet:?xt=c", host="evil.example:80")[0] == 403
+    assert call("/add?token=sekret")[0] == 400
+    assert call("/nope?token=sekret")[0] == 404
     api.stop()
 
 

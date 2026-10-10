@@ -77,16 +77,18 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 - **Auto-download.** With "Download finished items automatically" on, each item that finishes on a service is
   pulled into `<download folder>/<item name>/` with `aria2c` (8 connections) if installed, else `wget -c`.
   Output goes to `download-<name>.log` next to the applet; a notification tells you when it starts.
-- **Local API.** Set a port in Settings (0 = off); the applet listens on `127.0.0.1` only.
+- **Local API.** Set a port in Settings (0 = off); the applet listens on `127.0.0.1` only and generates a
+  random token, shown in Settings. Every call must carry it as `?token=…` or an `X-Debrid-Token` header, so a
+  web page cannot drive the applet behind your back. `/add` accepts `magnet:` and `http(s)://` items only.
 
-      curl 'http://127.0.0.1:PORT/add?service=Torbox&magnet=magnet:?xt=urn:btih:…'
-      curl -X POST --data-binary @links.txt 'http://127.0.0.1:PORT/add?service=AllDebrid'   # one item per line
-      curl http://127.0.0.1:PORT/toggle      # show / hide the window
-      curl http://127.0.0.1:PORT/status      # active count and item count per service
+      curl 'http://127.0.0.1:PORT/add?token=TOKEN&service=Torbox&magnet=magnet:?xt=urn:btih:…'
+      curl -H 'X-Debrid-Token: TOKEN' -X POST --data-binary @links.txt 'http://127.0.0.1:PORT/add?service=AllDebrid'
+      curl "http://127.0.0.1:PORT/toggle?token=TOKEN"      # show / hide the window
+      curl "http://127.0.0.1:PORT/status?token=TOKEN"      # active count and item count per service
 
-  Bookmarklet for tracker pages (replace PORT):
+  Bookmarklet for tracker pages (replace PORT and TOKEN; keep it to yourself, it contains the token):
 
-      javascript:fetch('http://127.0.0.1:PORT/add?service=Torbox&magnet='+encodeURIComponent(location.href))
+      javascript:fetch('http://127.0.0.1:PORT/add?token=TOKEN&service=Torbox&magnet='+encodeURIComponent(location.href),{mode:'no-cors'})
 
   `service` is optional; without it the first configured service is used.
 - **Expiry warning.** One notification per service when premium ends within 7 days.
