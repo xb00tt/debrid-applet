@@ -1,8 +1,9 @@
 # Debrid Applet
 
 Tray control panel for **Torbox**, **Real-Debrid** and **AllDebrid** on Linux Mint (Cinnamon).
-One window, one tab per service: account status, every torrent with live progress,
-add magnets / `.torrent` files / hoster links, stream or download the results, tidy up.
+One window, one tab per service plus an All tab: account status, every torrent with live progress,
+add magnets / `.torrent` files / hoster links, stream or download the results, tidy up. Then the power
+features: watch folder, RSS, auto-download, local API and CLI, activity log.
 
 Python 3 + GTK 3, no dependencies beyond a stock Mint 22 install.
 All three services are exercised against their live APIs: account, add (magnet, `.torrent`, link), list, files, play, delete.
@@ -72,6 +73,8 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 
 ## Power features
 
+### Automation
+
 - **Watch folder.** Point Settings at a folder; every `.torrent` that lands there is uploaded to the service you
   pick and moved to `done/` inside that folder. Files already there are picked up at start; a failed upload stays put.
 - **Auto-download.** With "Download finished items automatically" on, each item that finishes on a service is
@@ -81,6 +84,14 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 - **Stop seeding when done** (Torbox): sends `stop_seeding` the moment an item finishes.
 - **Prefer cached.** A checkbox in the Add box (and the default for API calls that name no service) sends magnets
   Torbox already has cached to Torbox and the rest to the current tab.
+- **RSS watch lists.** Settings takes feeds, one per line as `url | regex | service` (regex and service optional;
+  the regex is matched case-insensitively against the item title). Every N minutes (default 15) new matching items
+  whose link is a magnet or a `.torrent` file are added to that service; `.torrent` URLs are fetched and uploaded.
+  Seen items are remembered so nothing is added twice. Fetches are capped at 5 MB; `.torrent` URLs are only
+  fetched from public hosts (feeds you configure may live on your LAN).
+
+### Integration
+
 - **Local API.** Set a port in Settings (0 = off); the applet listens on `127.0.0.1` only and generates a
   random token, shown in Settings. Every call must carry it as `?token=…` or an `X-Debrid-Token` header, so a
   web page cannot drive the applet behind your back. `/add` accepts `magnet:` and `http(s)://` items only.
@@ -105,23 +116,24 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 - **Send to.** Right-click → Send to → another service re-adds the ticked items there by magnet (not from AllDebrid, which gives no hashes).
 - **Export / import.** The ⋮ menu in the toolbar exports every item's magnet (`magnet<TAB>name` per line) to a file,
   imports such a file (or any file with one magnet or link per line), or copies all magnets to the clipboard.
+- **Custom play target.** Settings → "Custom play command": `{url}` is the stream, `{sub}` an optional subtitle,
+  e.g. `stremio {url}`, `kodi-send --action=PlayMedia({url})`, `mpv --fs {url} --sub-file={sub}`. Empty = the detected player.
+
+### Playback
+
+- **Resume and playlists.** mpv and Celluloid resume where you stopped; a pack's Play picker has "Play all N in order".
+- **Subtitles.** Play hands a matching `.srt` / `.ass` / `.vtt` from the same item to mpv, Celluloid, SMPlayer
+  or VLC (same file name as the video, or the item's only subtitle).
+
+### Visibility
+
 - **All tab.** With more than one service configured, a fourth tab lists everything together, names prefixed with
   the service; Files, Play, Copy, Delete and friends act on the owning service. Adds from that tab go to the first
   configured service.
-- **Resume and playlists.** mpv and Celluloid resume where you stopped; a pack's Play picker has "Play all N in order".
-- **Custom play target.** Settings → "Custom play command": `{url}` is the stream, `{sub}` an optional subtitle,
-  e.g. `stremio {url}`, `kodi-send --action=PlayMedia({url})`, `mpv --fs {url} --sub-file={sub}`. Empty = the detected player.
-- **RSS watch lists.** Settings takes feeds, one per line as `url | regex | service` (regex and service optional;
-  the regex is matched case-insensitively against the item title). Every N minutes (default 15) new matching items
-  whose link is a magnet or a `.torrent` file are added to that service; `.torrent` URLs are fetched and uploaded.
-  Seen items are remembered so nothing is added twice. Fetches are capped at 5 MB; `.torrent` URLs are only
-  fetched from public hosts (feeds you configure may live on your LAN).
 - **Expiry warning.** One notification per service when premium ends within 7 days.
 - **Activity log.** Clock icon in the toolbar (or `Ctrl+L`): status messages and notifications with a timestamp,
   newest last, with Refresh / Open file / Clear. Kept in `~/.local/share/debrid-applet/activity.log`. Settings choose
   the level (Off / Errors only / Actions and notifications / Verbose with every poll) and the size cap (default 1000 KB).
-- **Subtitles.** Play hands a matching `.srt` / `.ass` / `.vtt` from the same item to mpv, Celluloid, SMPlayer
-  or VLC (same file name as the video, or the item's only subtitle).
 
 ## Settings
 
