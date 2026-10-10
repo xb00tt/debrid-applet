@@ -60,13 +60,16 @@ def test_rd_account():
 
 def test_rd_torrents_normalize_and_autoselect():
     s = FakeSession(FakeResp(200, [
-        {"id": "A", "filename": "a.mkv", "progress": 42.5, "status": "downloading", "bytes": 1000, "seeders": 3, "speed": 50},
+        {"id": "A", "filename": "a.mkv", "progress": 42.5, "status": "downloading", "bytes": 1000, "seeders": 3, "speed": 50,
+         "added": "2026-10-01T10:00:00.000Z"},
         {"id": "B", "filename": "b.iso", "progress": 0, "status": "waiting_files_selection", "bytes": 10},
-        {"id": "C", "filename": "c.zip", "progress": 100, "status": "downloaded", "bytes": 5},
+        {"id": "C", "filename": "c.zip", "progress": 100, "status": "downloaded", "bytes": 5, "ended": "2026-10-02T11:00:00.000Z"},
     ]), FakeResp(204))
     out = RealDebrid("t", s).torrents()
     assert out[0] == {"id": "A", "name": "a.mkv", "progress": 42.5, "state": "downloading", "done": False,
-                      "size": 1000, "seeds": 3, "speed": 50, "kind": "torrent"}
+                      "size": 1000, "seeds": 3, "speed": 50, "kind": "torrent", "up_speed": None, "peers": None,
+                      "ratio": None, "added": "2026-10-01T10:00:00.000Z", "finished": ""}
+    assert out[2]["finished"] == "2026-10-02T11:00:00.000Z" and out[2]["added"] == ""
     assert out[1]["seeds"] == 0 and out[1]["done"] is False
     assert out[2]["done"] is True
     assert s.calls[0][2]["params"] == {"limit": 100}
@@ -214,18 +217,21 @@ def test_tb_account():
 def test_tb_torrents_merges_webdl():
     s = FakeSession(
         ok([{"id": 7, "name": "seven.mkv", "progress": 0.25, "download_state": "downloading",
-             "download_finished": False, "download_present": False, "size": 2000, "seeds": 9, "download_speed": 300},
+             "download_finished": False, "download_present": False, "size": 2000, "seeds": 9, "download_speed": 300,
+             "upload_speed": 10, "peers": 4, "ratio": 0.5, "created_at": "2026-10-02T00:00:00Z", "updated_at": "2026-10-03T00:00:00Z"},
             {"id": 8, "name": "eight.iso", "progress": 1, "download_state": "uploading",
-             "download_finished": True, "download_present": True, "size": 1}]),
+             "download_finished": True, "download_present": True, "size": 1, "updated_at": "2026-10-04T00:00:00Z"}]),
         ok([{"id": 3, "name": "web.bin", "progress": 1, "download_state": "completed",
              "download_finished": True, "download_present": True, "size": 5}]),
     )
     out = Torbox("t", s).torrents()
     assert out[0] == {"id": "7", "name": "seven.mkv", "progress": 25.0, "state": "downloading", "done": False,
-                      "size": 2000, "seeds": 9, "speed": 300, "kind": "torrent"}
-    assert out[1]["done"] is True and out[1]["progress"] == 100.0
+                      "size": 2000, "seeds": 9, "speed": 300, "kind": "torrent", "up_speed": 10, "peers": 4,
+                      "ratio": 0.5, "added": "2026-10-02T00:00:00Z", "finished": ""}
+    assert out[1]["done"] is True and out[1]["progress"] == 100.0 and out[1]["finished"] == "2026-10-04T00:00:00Z"
     assert out[2] == {"id": "3", "name": "web.bin", "progress": 100.0, "state": "web: completed", "done": True,
-                      "size": 5, "seeds": 0, "speed": 0, "kind": "webdl"}
+                      "size": 5, "seeds": 0, "speed": 0, "kind": "webdl", "up_speed": 0, "peers": 0, "ratio": 0.0,
+                      "added": "", "finished": ""}
     assert s.calls[0][:2] == ("GET", TB + "/torrents/mylist")
     assert s.calls[0][2]["params"] == {"bypass_cache": "true"}
     assert s.calls[1][:2] == ("GET", TB + "/webdl/mylist")
@@ -363,7 +369,8 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
     shutil.rmtree(tmp_dir, ignore_errors=True)
     debrid_applet.CONFIG_DIR = tmp_dir
     debrid_applet.CONFIG = os.path.join(tmp_dir, "config.json")
-    defaults = {"torbox_key": "", "realdebrid_key": "", "notify_added": True, "notify_done": True}
+    defaults = {"torbox_key": "", "realdebrid_key": "", "notify_added": True, "notify_done": True,
+                "columns": {"order": [], "hidden": []}}
     assert debrid_applet.load_config() == defaults
     debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b", "notify_done": False})
     assert stat.S_IMODE(os.stat(debrid_applet.CONFIG).st_mode) == 0o600
@@ -405,6 +412,18 @@ def test_add_one_routes_by_kind():
         assert False
     except ApiError as e:
         assert "not a magnet" in str(e)
+
+
+def test_local_time_and_cell_formats():
+    import debrid_applet
+    assert debrid_applet.local_time("") == ""
+    assert debrid_applet.local_time("garbage") == ""
+    s = debrid_applet.local_time("2026-10-10T19:52:35.000Z")
+    assert len(s) == 16 and s[4] == "-" and s[10] == " "
+    assert debrid_applet.local_time("2026-10-10T19:52:35Z")[:10] == s[:10]
+    assert debrid_applet.fmt_speed(0) == "" and debrid_applet.fmt_speed(None) == ""
+    assert debrid_applet.fmt_speed(1536) == "1.5 KB/s"
+    assert debrid_applet.na(None) == "" and debrid_applet.na(4) == "4" and debrid_applet.na(0.5, "{:.2f}") == "0.50"
 
 
 def test_add_label():

@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
 import gi
@@ -26,7 +27,8 @@ GLib.set_prgname(APP_ID)
 
 CONFIG_DIR = os.path.expanduser("~/.config/debrid-applet")
 CONFIG = os.path.join(CONFIG_DIR, "config.json")
-EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "notify_added": True, "notify_done": True}
+EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "notify_added": True, "notify_done": True,
+                "columns": {"order": [], "hidden": []}}
 POLL_SECONDS = 30
 INVALID_KEY = "Invalid API key"
 
@@ -109,8 +111,50 @@ def notify(title, body):
     Notify.Notification.new(title, body, APP_ID).show()
 
 
+def local_time(iso):
+    """'2026-10-10T19:52:35.000Z' (UTC) -> '2026-10-10 21:52' in the local zone; '' when absent or odd."""
+    if not iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso)
+    except ValueError:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+def fmt_speed(n):
+    return f"{human_size(n)}/s" if n else ""
+
+
+def na(value, fmt="{}"):
+    return "" if value is None else fmt.format(value)
+
+
 def red(text):
     return f'<span foreground="red">{GLib.markup_escape_text(text)}</span>'
+
+
+# key, title, display column, kind, sort column (raw numbers live in hidden store columns)
+COLUMNS = (
+    ("check", "", 6, "toggle", None),
+    ("name", "Name", 1, "text", 1),
+    ("dl", "Down", 7, "text", 15),
+    ("ul", "Up", 8, "text", 16),
+    ("progress", "Progress", 2, "progress", 2),
+    ("seeds", "Seeds", 9, "text", 17),
+    ("peers", "Peers", 10, "text", 18),
+    ("ratio", "Ratio", 11, "text", 19),
+    ("state", "State", 3, "text", 3),
+    ("size", "Size", 4, "text", 14),
+    ("added", "Added", 12, "text", 12),
+    ("finished", "Finished", 13, "text", 13),
+)
+STORE_TYPES = (str, str, int, str, str, str, bool,  # 0 id, 1 name, 2 progress, 3 state, 4 size, 5 kind, 6 checked
+               str, str, str, str, str, str, str,   # 7 dl, 8 ul, 9 seeds, 10 peers, 11 ratio, 12 added, 13 finished
+               float, float, float, int, int, float)  # 14 size, 15 dl, 16 ul, 17 seeds, 18 peers, 19 ratio (raw)
+CHECKED, STATUS_HOLD = 6, 8  # store column of the checkbox; seconds an action message stays before polls overwrite it
 
 
 class ServiceTab(Gtk.Box):
@@ -118,8 +162,11 @@ class ServiceTab(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=8)
         self.name, self.client, self.app = name, client, app
         self.done_ids = None  # None until first successful poll; then set of finished ids
+        self.checked = set()  # ids with the checkbox on; survives refreshes
         self.active = 0
         self._is_busy = False
+        self._applying = True  # suppress columns-changed while we build or restore the layout
+        self._hold_until = 0
 
         self.account_label = Gtk.Label(xalign=0, label="Not configured" if client is None else "Loading…")
 
@@ -131,14 +178,36 @@ class ServiceTab(Gtk.Box):
             row.pack_start(icon_button(icon, tip, cb), False, False, 0)
         self.pack_start(row, False, False, 0)
 
-        self.store = Gtk.ListStore(str, str, int, str, str, str)  # id, name, progress, state, size, kind
+        self.store = Gtk.ListStore(*STORE_TYPES)
         self.view = Gtk.TreeView(model=self.store)
-        name_col = Gtk.TreeViewColumn("Name", Gtk.CellRendererText(ellipsize=Pango.EllipsizeMode.END), text=1)
-        name_col.set_expand(True)
-        self.view.append_column(name_col)
-        self.view.append_column(Gtk.TreeViewColumn("Progress", Gtk.CellRendererProgress(), value=2))
-        self.view.append_column(Gtk.TreeViewColumn("State", Gtk.CellRendererText(), text=3))
-        self.view.append_column(Gtk.TreeViewColumn("Size", Gtk.CellRendererText(), text=4))
+        self.cols = {}
+        for key, title, idx, kind, sort_idx in COLUMNS:
+            if kind == "toggle":
+                rend = Gtk.CellRendererToggle()
+                rend.connect("toggled", self.on_toggled)
+                col = Gtk.TreeViewColumn("", rend, active=idx)
+                self.all_check = Gtk.CheckButton()
+                self.all_check.show()
+                col.set_widget(self.all_check)
+                col.set_clickable(True)
+                col.connect("clicked", self.on_toggle_all)
+            elif kind == "progress":
+                col = Gtk.TreeViewColumn(title, Gtk.CellRendererProgress(), value=idx)
+            else:
+                ellipsize = Pango.EllipsizeMode.END if key == "name" else Pango.EllipsizeMode.NONE
+                col = Gtk.TreeViewColumn(title, Gtk.CellRendererText(ellipsize=ellipsize), text=idx)
+                col.set_resizable(True)
+            if key == "name":
+                col.set_expand(True)
+            if sort_idx is not None:
+                col.set_sort_column_id(sort_idx)
+            col.set_reorderable(True)
+            self.view.append_column(col)
+            col.get_button().connect("button-press-event", self.on_header_press)
+            self.cols[key] = col
+        self.apply_columns()
+        self.view.connect("columns-changed", self.on_columns_changed)
+        self.store.connect("sort-column-changed", self.on_sort_changed)
         scroller = Gtk.ScrolledWindow(vexpand=True)
         scroller.add(self.view)
         self.pack_start(scroller, True, True, 0)
@@ -146,8 +215,8 @@ class ServiceTab(Gtk.Box):
         actions = Gtk.Box(spacing=6)
         self.links_btn = Gtk.Button(label="Links ▾")
         self.links_btn.connect("clicked", self.on_links)
-        self.copy_btn = Gtk.Button(label="Copy first link")
-        self.copy_btn.connect("clicked", self.on_copy_first)
+        self.copy_btn = Gtk.Button(label="Copy links")
+        self.copy_btn.connect("clicked", self.on_copy_links)
         self.del_btn = Gtk.Button(label="Delete")
         self.del_btn.connect("clicked", self.on_delete)
         for b in (self.links_btn, self.copy_btn, self.del_btn):
@@ -161,21 +230,102 @@ class ServiceTab(Gtk.Box):
         self.view.get_selection().connect("changed", lambda _s: self._update_buttons())
         self._update_buttons()
 
-    # ----- state helpers -----
+    # ----- column layout (shared by both tabs through the config) -----
+    def apply_columns(self):
+        cfg = self.app.cfg.get("columns") or {}
+        self._applying = True
+        prev = None
+        for key in cfg.get("order") or []:
+            col = self.cols.get(key)
+            if col is not None:
+                self.view.move_column_after(col, prev)
+                prev = col
+        hidden = set(cfg.get("hidden") or [])
+        for key, col in self.cols.items():
+            col.set_visible(key not in hidden)
+        sort = cfg.get("sort")
+        if sort:
+            idx = next((s for k, _t, _i, _k, s in COLUMNS if k == sort[0]), None)
+            if idx is not None:
+                self.store.set_sort_column_id(idx, Gtk.SortType.DESCENDING if sort[1] == "desc" else Gtk.SortType.ASCENDING)
+        self._applying = False
+
+    def on_columns_changed(self, _view):
+        if self._applying:
+            return
+        order = [k for col in self.view.get_columns() for k, c in self.cols.items() if c is col]
+        self.app.set_columns(order=order)
+
+    def on_sort_changed(self, store):
+        if self._applying:
+            return
+        ok, idx, direction = store.get_sort_column_id()
+        key = next((k for k, _t, _i, _k, s in COLUMNS if s == idx), None)
+        if ok and key:
+            self.app.set_columns(sort=[key, "desc" if direction == Gtk.SortType.DESCENDING else "asc"])
+
+    def on_header_press(self, _btn, event):
+        if event.button != 3:
+            return False
+        menu = Gtk.Menu()
+        for key, title, _i, _k, _s in COLUMNS:
+            if key in ("check", "name"):
+                continue
+            item = Gtk.CheckMenuItem(label=title, active=self.cols[key].get_visible())
+            item.connect("toggled", lambda it, k=key: self.app.set_columns(hide=(k, not it.get_active())))
+            menu.append(item)
+        menu.show_all()
+        menu.popup_at_pointer(event)
+        return True
+
+    # ----- checkboxes and targets -----
+    def on_toggled(self, _rend, path):
+        row = self.store[path]
+        row[CHECKED] = not row[CHECKED]
+        (self.checked.add if row[CHECKED] else self.checked.discard)(row[0])
+        self._sync_checks()
+
+    def on_toggle_all(self, _col):
+        turn_on = not all(r[CHECKED] for r in self.store)
+        for r in self.store:
+            r[CHECKED] = turn_on
+        self.checked = {r[0] for r in self.store} if turn_on else set()
+        self._sync_checks()
+
+    def _sync_checks(self):
+        rows = len(self.store)
+        self.all_check.set_active(rows > 0 and all(r[CHECKED] for r in self.store))
+        self._update_buttons()
+
+    def _row(self, r):
+        return {"id": r[0], "name": r[1], "kind": r[5]}
+
     def _selected(self):
         model, it = self.view.get_selection().get_selected()
-        if it is None:
-            return None
-        return {"id": model[it][0], "name": model[it][1], "kind": model[it][5]}
+        return None if it is None else self._row(model[it])
+
+    def _targets(self):
+        """Checked rows if any, else the highlighted row."""
+        checked = [self._row(r) for r in self.store if r[CHECKED]]
+        if checked:
+            return checked
+        sel = self._selected()
+        return [sel] if sel else []
 
     def _update_buttons(self):
-        ok = self.client is not None and not self._is_busy and self._selected() is not None
-        for b in (self.links_btn, self.copy_btn, self.del_btn):
-            b.set_sensitive(ok)
+        n = len(self._targets()) if self.client is not None and not self._is_busy else 0
+        self.links_btn.set_sensitive(n == 1)
+        self.copy_btn.set_sensitive(n >= 1)
+        self.del_btn.set_sensitive(n >= 1)
 
     def _busy(self, flag):
         self._is_busy = flag
         self._update_buttons()
+
+    def say(self, msg, error=False):
+        """Status line message that polls leave alone for a few seconds."""
+        self.status.set_markup(red(msg) if error else GLib.markup_escape_text(msg))
+        self._hold_until = time.monotonic() + STATUS_HOLD
 
     def _run(self, fn, cb):
         """Run a network action; show errors in the status label; then cb(result, error)."""
@@ -185,7 +335,7 @@ class ServiceTab(Gtk.Box):
         def done(res, err):
             self._busy(False)
             if err:
-                self.status.set_markup(red(err))
+                self.say(err, error=True)
                 if err == INVALID_KEY:
                     self.app.open_settings_once()
             cb(res, err)
@@ -195,23 +345,33 @@ class ServiceTab(Gtk.Box):
     def render(self, account, torrents, error):
         if error:
             self.account_label.set_markup(red(error))
-            self.status.set_markup(red(error))
+            self.say(error, error=True)
             if error == INVALID_KEY:
                 self.app.open_settings_once()
             return
         self.account_label.set_text(
             f"{account['plan']} · expires {account['expires'] or '—'} · {account['extra']}")
         selected = self._selected()
+        self.checked &= {t["id"] for t in torrents}
         self.store.clear()
         for t in torrents:
-            self.store.append([t["id"], t["name"], int(max(0, min(100, t["progress"]))),
-                               t["state"], human_size(t["size"]), t["kind"]])
+            self.store.append([
+                t["id"], t["name"], int(max(0, min(100, t["progress"]))), t["state"], human_size(t["size"]), t["kind"],
+                t["id"] in self.checked,
+                fmt_speed(t["speed"]), fmt_speed(t["up_speed"]), str(t["seeds"]), na(t["peers"]), na(t["ratio"], "{:.2f}"),
+                local_time(t["added"]), local_time(t["finished"]),
+                float(t["size"]), float(t["speed"] or 0), float(t["up_speed"] or -1),
+                int(t["seeds"]), -1 if t["peers"] is None else int(t["peers"]),
+                -1.0 if t["ratio"] is None else float(t["ratio"]),
+            ])
         if selected:
             for row in self.store:
                 if row[0] == selected["id"]:
                     self.view.get_selection().select_iter(row.iter)
+        self._sync_checks()
         self.active = sum(1 for t in torrents if not t["done"])
-        self.status.set_text(f"Updated {time.strftime('%H:%M:%S')} · {self.active} active")
+        if time.monotonic() >= self._hold_until:
+            self.status.set_text(f"Updated {time.strftime('%H:%M:%S')} · {self.active} active")
 
         prev = self.done_ids
         self.done_ids = {t["id"] for t in torrents if t["done"]}
@@ -291,22 +451,21 @@ class ServiceTab(Gtk.Box):
             msg = f"Added {len(added)}" + (", direct link(s) copied" if urls else "")
             if errors:
                 msg += " · failed: " + "; ".join(errors)
-            self.status.set_markup(red(msg) if errors else GLib.markup_escape_text(msg))
+            self.say(msg, error=bool(errors))
             self.app.refresh()
         self._run(work, done)
 
-    def _fetch_links(self, cb):
-        sel = self._selected()
-        if sel is None:
-            return
-        self._run(lambda: self.client.links(sel["id"], sel["kind"]), cb)
-
     def on_links(self, btn):
+        targets = self._targets()
+        if len(targets) != 1:
+            return
+        t = targets[0]
+
         def show(links, err):
             if err:
                 return
             if not links:
-                self.status.set_text("No links yet (not finished?)")
+                self.say("No links yet (not finished?)")
                 return
             menu = Gtk.Menu()
             for link in links:
@@ -319,27 +478,63 @@ class ServiceTab(Gtk.Box):
             menu.append(copy_all)
             menu.show_all()
             menu.popup_at_widget(btn, Gdk.Gravity.SOUTH_WEST, Gdk.Gravity.NORTH_WEST, None)
-            self.status.set_text(f"{len(links)} link(s)")
-        self._fetch_links(show)
+            self.say(f"{len(links)} link(s)")
+        self._run(lambda: self.client.links(t["id"], t["kind"]), show)
 
-    def on_copy_first(self, _btn):
-        def copy(links, err):
+    def on_copy_links(self, _btn):
+        targets = self._targets()
+        if not targets:
+            return
+
+        def work():
+            urls, errors = [], []
+            for t in targets:
+                for link in self.client.links(t["id"], t["kind"]):
+                    (urls if link["url"] else errors).append(link["url"] or link["name"])
+            return urls, errors
+
+        def done(res, err):
             if err:
                 return
-            urls = [l["url"] for l in links if l["url"]]
+            urls, errors = res
             if urls:
-                copy_text(urls[0])
-                self.status.set_text("Link copied to clipboard")
-            else:
-                self.status.set_text("No links yet (not finished?)")
-        self._fetch_links(copy)
+                copy_text("\n".join(urls))
+            msg = f"Copied {len(urls)} link(s)" if urls else "No links yet (not finished?)"
+            if errors:
+                msg += " · " + "; ".join(errors)
+            self.say(msg, error=bool(errors))
+        self._run(work, done)
 
     def on_delete(self, _btn):
-        sel = self._selected()
-        if sel is None:
+        targets = self._targets()
+        if not targets:
             return
-        self._run(lambda: self.client.delete(sel["id"], sel["kind"]),
-                  lambda _r, err: None if err else self.app.refresh())
+        if len(targets) > 1:
+            dlg = Gtk.MessageDialog(transient_for=self.app.window, modal=True, message_type=Gtk.MessageType.QUESTION,
+                                    buttons=Gtk.ButtonsType.OK_CANCEL, text=f"Delete {len(targets)} items from {self.name}?")
+            ok = dlg.run() == Gtk.ResponseType.OK
+            dlg.destroy()
+            if not ok:
+                return
+
+        def work():
+            errors = []
+            for t in targets:
+                try:
+                    self.client.delete(t["id"], t["kind"])
+                except ApiError as e:
+                    errors.append(f"{t['name'][:40]}: {e}")
+            return errors
+
+        def done(errors, err):
+            if err:
+                return
+            self.checked -= {t["id"] for t in targets}
+            if errors:
+                self.say("Delete failed: " + "; ".join(errors), error=True)
+            self.app.refresh()
+        self._run(work, done)
+
 
 class App:
     def __init__(self):
@@ -366,7 +561,7 @@ class App:
         menu.show_all()
         self.icon.set_secondary_menu(menu)
 
-        self.window = Gtk.Window(title="Debrid", default_width=640, default_height=480)
+        self.window = Gtk.Window(title="Debrid", default_width=1100, default_height=560)
         self.window.connect("delete-event", lambda w, _e: w.hide() or True)
         self.notebook = Gtk.Notebook()
         self.window.add(self.notebook)
@@ -421,6 +616,20 @@ class App:
             self.icon.set_label(f"{active}↓" if active else "")
         run_async(fetch, done)
         return True
+
+    def set_columns(self, order=None, hide=None, sort=None):
+        """Persist column order / visibility / sort and apply to both tabs."""
+        cols = self.cfg.setdefault("columns", {"order": [], "hidden": []})
+        if order is not None:
+            cols["order"] = order
+        if hide is not None:
+            key, hidden = hide
+            cols["hidden"] = sorted((set(cols.get("hidden") or []) | {key}) - (set() if hidden else {key}))
+        if sort is not None:
+            cols["sort"] = sort
+        save_config(self.cfg)
+        for tab in self.tabs:
+            tab.apply_columns()
 
     def open_settings_once(self):
         key = (self.cfg["torbox_key"], self.cfg["realdebrid_key"])

@@ -119,6 +119,11 @@ class RealDebrid(_Client):
                 "seeds": int(t.get("seeders") or 0),
                 "speed": int(t.get("speed") or 0),
                 "kind": "torrent",
+                "up_speed": None,  # Real-Debrid does not report these three
+                "peers": None,
+                "ratio": None,
+                "added": t.get("added") or "",
+                "finished": t.get("ended") or "",
             })
         return out
 
@@ -183,16 +188,22 @@ class Torbox(_Client):
         for kind, path in (("torrent", "/torrents/mylist"), ("webdl", "/webdl/mylist")):
             for t in self._json("GET", path, params={"bypass_cache": "true"}) or []:
                 state = t.get("download_state") or ""
+                done = bool(t.get("download_finished")) and bool(t.get("download_present"))
                 out.append({
                     "id": str(t["id"]),
                     "name": t.get("name", ""),
                     "progress": min(100.0, float(t.get("progress") or 0) * 100),  # API gives 0..1
                     "state": state if kind == "torrent" else f"web: {state}",
-                    "done": bool(t.get("download_finished")) and bool(t.get("download_present")),
+                    "done": done,
                     "size": int(t.get("size") or 0),
                     "seeds": int(t.get("seeds") or 0),
                     "speed": int(t.get("download_speed") or 0),
                     "kind": kind,
+                    "up_speed": int(t.get("upload_speed") or 0),
+                    "peers": int(t.get("peers") or 0),
+                    "ratio": float(t.get("ratio") or 0),
+                    "added": t.get("created_at") or "",
+                    "finished": (t.get("updated_at") or "") if done else "",  # no finish timestamp in the API
                 })
         return out
 
