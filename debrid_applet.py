@@ -1999,8 +1999,9 @@ class App:
                 t.set_polling(False)
             for t, acc, tors, e in results or []:
                 t.render(acc, tors, e)
-            active = sum(t.active for t in self.tabs)
+            active = sum(t.active for t in self.tabs if not t.is_merged)  # the All tab mirrors the others
             self.icon.set_label(f"{active}↓" if active else "")
+            self.icon.set_tooltip_text(f"Debrid · {active} item(s) still downloading · polling every {self._interval} s")
             self._schedule(POLL_FAST if active or any(t._pending for t in self.tabs) else POLL_SLOW)
             if self._refresh_again:
                 self.refresh()
@@ -2013,7 +2014,6 @@ class App:
             GLib.source_remove(self._timer)
         self._interval = seconds
         self._timer = GLib.timeout_add_seconds(seconds, self._tick)
-        self.icon.set_tooltip_text(f"Debrid · polling every {seconds} s")
         for t in self.tabs:
             t.set_poll_interval(seconds)
 

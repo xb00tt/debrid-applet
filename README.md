@@ -30,7 +30,7 @@ if you tick that in Settings; they never leave your machine except in requests t
 ## Tray icon
 
 - Left-click: show / hide the window. Right-click: Refresh, Settings…, Quit.
-- Label next to the icon shows how many items are still downloading.
+- Label next to the icon (e.g. `32↓`) is how many items across all services are not finished yet; hover for details.
 - Only one instance runs; launching the applet again just raises the window.
 
 ## Adding things
