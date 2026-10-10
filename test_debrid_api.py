@@ -917,6 +917,11 @@ def test_fetch_bytes_guards():
     open(os.path.join(root, "big.bin"), "wb").write(b"x" * 300_000)
     class Quiet(http.server.SimpleHTTPRequestHandler):
         def log_message(self, *_): pass
+        def do_GET(self):
+            if self.path in ("/redir", "/redir-bad", "/loop"):  # -> small file / file: URL / itself
+                target = {"/redir": "/small.torrent", "/redir-bad": "file:///etc/passwd", "/loop": "/loop"}[self.path]
+                self.send_response(302); self.send_header("Location", target); self.end_headers(); return
+            super().do_GET()
         def copyfile(self, source, outputfile):
             try:
                 super().copyfile(source, outputfile)
@@ -937,6 +942,13 @@ def test_fetch_bytes_guards():
         assert False
     except ApiError as e:
         assert "larger than" in str(e)
+    assert da.fetch_bytes(base + "/redir", 1000, allow_private=True) == b"d8:announce0:e"
+    for path, text in (("/redir-bad", "unsupported"), ("/loop", "too many redirects")):
+        try:
+            da.fetch_bytes(base + path, 1000, allow_private=True)
+            assert False, path
+        except ApiError as e:
+            assert text in str(e), (path, str(e))
     srv.shutdown()
 
 

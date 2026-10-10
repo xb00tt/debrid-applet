@@ -419,21 +419,32 @@ def is_public_host(host):
 
 
 def fetch_bytes(url, max_bytes, allow_private=False):
-    """GET a URL with a hard size cap; refuses private/loopback hosts unless the caller trusts the URL."""
+    """GET a URL with a hard size cap. Redirects are followed by hand so every hop gets the same checks:
+    http(s) only, and no private/loopback hosts unless the caller trusts the URL (feeds typed into Settings)."""
     import requests
-    if not allow_private and not is_public_host(urlparse(url).hostname or ""):
-        raise ApiError("refusing to fetch from a private or local address")
+    from urllib.parse import urljoin
     try:
-        with requests.get(url, timeout=20, stream=True, headers={"User-Agent": "debrid-applet"}) as r:
-            r.raise_for_status()
-            data = b""
-            for chunk in r.iter_content(65536):
-                data += chunk
-                if len(data) > max_bytes:
-                    raise ApiError(f"{url} is larger than {max_bytes // 1_000_000} MB")
+        for _hop in range(5):
+            parts = urlparse(url)
+            if parts.scheme not in ("http", "https"):
+                raise ApiError(f"unsupported URL scheme in {url[:60]}")
+            if not allow_private and not is_public_host(parts.hostname or ""):
+                raise ApiError("refusing to fetch from a private or local address")
+            with requests.get(url, timeout=20, stream=True, allow_redirects=False,
+                              headers={"User-Agent": "debrid-applet"}) as r:
+                if r.is_redirect or r.is_permanent_redirect:
+                    url = urljoin(url, r.headers.get("Location", ""))
+                    continue
+                r.raise_for_status()
+                data = b""
+                for chunk in r.iter_content(65536):
+                    data += chunk
+                    if len(data) > max_bytes:
+                        raise ApiError(f"{url} is larger than {max_bytes // 1_000_000} MB")
+                return data
+        raise ApiError("too many redirects")
     except requests.RequestException as e:
         raise ApiError(f"fetch failed: {e}") from e
-    return data
 
 
 def parse_feed(xml_text):
