@@ -426,6 +426,19 @@ def test_local_time_and_cell_formats():
     assert debrid_applet.na(None) == "" and debrid_applet.na(4) == "4" and debrid_applet.na(0.5, "{:.2f}") == "0.50"
 
 
+def test_state_kind_buckets():
+    import debrid_applet
+    k = debrid_applet.state_kind
+    assert k("downloading") == "active" and k("metaDL") == "active" and k("queued") == "active"
+    assert k("waiting_files_selection") == "active" and k("magnet_conversion") == "active"
+    assert k("downloaded") == "done" and k("cached") == "done" and k("web: completed") == "done"
+    assert k("uploading (no peers)") == "seed"
+    assert k("stalled (no seeds)") == "warn" and k("paused") == "warn"
+    assert k("error") == "error" and k("magnet_error") == "error" and k("dead") == "error" and k("virus") == "error"
+    assert k("") == "done"
+    assert set(debrid_applet.PALETTE) == {"active", "done", "seed", "warn", "error"}
+
+
 def test_add_label():
     import debrid_applet
     assert debrid_applet.add_label("magnet:?xt=urn:btih:abc&dn=Some+Name+S01") == "Some Name S01"

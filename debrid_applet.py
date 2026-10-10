@@ -154,7 +154,29 @@ COLUMNS = (
 STORE_TYPES = (str, str, int, str, str, str, bool,  # 0 id, 1 name, 2 progress, 3 state, 4 size, 5 kind, 6 checked
                str, str, str, str, str, str, str,   # 7 dl, 8 ul, 9 seeds, 10 peers, 11 ratio, 12 added, 13 finished
                float, float, float, int, int, float)  # 14 size, 15 dl, 16 ul, 17 seeds, 18 peers, 19 ratio (raw)
-CHECKED, STATUS_HOLD = 6, 8  # store column of the checkbox; seconds an action message stays before polls overwrite it
+CHECKED, STATUS_HOLD = 6, 8
+NUMERIC = ("dl", "ul", "seeds", "peers", "ratio", "size")  # right-aligned
+PALETTE = {"active": "#3b82f6", "done": "#22c55e", "seed": "#14b8a6", "warn": "#f59e0b", "error": "#ef4444"}
+CSS = b"""
+treeview.view.progressbar { background-color: #e8761b; border-color: #e8761b; }
+treeview.view { font-feature-settings: 'tnum'; }
+"""
+
+
+def state_kind(state):
+    """Bucket a raw service state string into a PALETTE key."""
+    s = state.lower()
+    if any(w in s for w in ("error", "dead", "virus")):
+        return "error"
+    if "stalled" in s or "paused" in s:
+        return "warn"
+    if any(w in s for w in ("downloaded", "completed", "cached")):
+        return "done"
+    if "upload" in s or "seed" in s:
+        return "seed"
+    if any(w in s for w in ("download", "metadl", "checking", "queued", "magnet", "waiting", "compressing")):
+        return "active"
+    return "done"  # store column of the checkbox; seconds an action message stays before polls overwrite it
 
 
 class ServiceTab(Gtk.Box):
@@ -199,6 +221,11 @@ class ServiceTab(Gtk.Box):
                 col.set_resizable(True)
             if key == "name":
                 col.set_expand(True)
+            if key in NUMERIC:
+                col.get_cells()[0].set_property("xalign", 1.0)
+                col.set_alignment(1.0)
+            if kind == "text":
+                col.set_cell_data_func(col.get_cells()[0], self._style_cell, key)
             if sort_idx is not None:
                 col.set_sort_column_id(sort_idx)
             col.set_reorderable(True)
@@ -277,6 +304,22 @@ class ServiceTab(Gtk.Box):
         menu.show_all()
         menu.popup_at_pointer(event)
         return True
+
+    def _style_cell(self, _col, cell, model, it, key):
+        """Zebra rows, state colored by kind, finished names dimmed. Selected rows keep the theme's look."""
+        if self.view.get_selection().iter_is_selected(it):
+            cell.set_property("cell-background-set", False)
+            cell.set_property("foreground-set", False)
+            return
+        fg = self.view.get_style_context().get_color(Gtk.StateFlags.NORMAL)
+        idx = model.get_path(it).get_indices()[0]
+        cell.set_property("cell-background-rgba", Gdk.RGBA(fg.red, fg.green, fg.blue, 0.035 if idx % 2 else 0))
+        kind = state_kind(model[it][3])
+        if key == "state":
+            cell.set_property("foreground", PALETTE[kind])
+        else:
+            dim = key == "name" and kind in ("done", "seed")
+            cell.set_property("foreground-rgba", Gdk.RGBA(fg.red, fg.green, fg.blue, 0.55 if dim else 0.85))
 
     # ----- checkboxes and targets -----
     def on_toggled(self, _rend, path):
@@ -539,6 +582,9 @@ class ServiceTab(Gtk.Box):
 class App:
     def __init__(self):
         Notify.init(APP_ID)
+        css = Gtk.CssProvider()
+        css.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         Gtk.IconTheme.get_default().append_search_path(HERE)  # debrid-applet.svg next to this file
         Gtk.Window.set_default_icon_name(APP_ID)
         self.cfg = load_config()
