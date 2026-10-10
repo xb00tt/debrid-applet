@@ -88,7 +88,7 @@ The first four toggles are on by default.
 - Polls every 8 s while something is downloading, every 60 s when idle. Hover the tray icon to see the current interval.
 - Red text in the status line is the service's own error message; hover the status line for the last few.
 - Window size, column layout and widths, sort order and state filter persist across restarts, per service.
-- Config lives in `~/.config/debrid-applet/config.json`; delete it to start over.
+- Config lives in `~/.config/debrid-applet/config.json`; delete it to start over. To see the one-time double-click question again, set `dblclick_asked` to `false` there.
 
 ## Dev
 
