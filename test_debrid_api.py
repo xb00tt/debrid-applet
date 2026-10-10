@@ -2,9 +2,14 @@
 import json
 import requests
 
-from debrid_api import ApiError, RealDebrid, human_size
+from debrid_api import ApiError, RealDebrid, Torbox, human_size
 
 RD = "https://api.real-debrid.com/rest/1.0"
+TB = "https://api.torbox.app/v1/api"
+
+
+def ok(data):
+    return FakeResp(200, {"success": True, "error": None, "detail": "ok", "data": data})
 
 
 class FakeResp:
@@ -148,6 +153,123 @@ def test_network_error():
         assert False
     except ApiError as e:
         assert str(e).startswith("Network error:")
+
+
+def test_tb_account():
+    s = FakeSession(ok({"plan": 2, "premium_expires_at": "2027-05-01T00:00:00Z", "total_downloaded": 3 * 1024 ** 3}))
+    assert Torbox("t", s).account() == {"plan": "Pro", "expires": "2027-05-01", "extra": "3.0 GB downloaded"}
+    assert s.calls[0][:2] == ("GET", TB + "/user/me")
+
+
+def test_tb_torrents_merges_webdl():
+    s = FakeSession(
+        ok([{"id": 7, "name": "seven.mkv", "progress": 0.25, "download_state": "downloading",
+             "download_finished": False, "download_present": False, "size": 2000, "seeds": 9, "download_speed": 300},
+            {"id": 8, "name": "eight.iso", "progress": 1, "download_state": "uploading",
+             "download_finished": True, "download_present": True, "size": 1}]),
+        ok([{"id": 3, "name": "web.bin", "progress": 1, "download_state": "completed",
+             "download_finished": True, "download_present": True, "size": 5}]),
+    )
+    out = Torbox("t", s).torrents()
+    assert out[0] == {"id": "7", "name": "seven.mkv", "progress": 25.0, "state": "downloading", "done": False,
+                      "size": 2000, "seeds": 9, "speed": 300, "kind": "torrent"}
+    assert out[1]["done"] is True and out[1]["progress"] == 100.0
+    assert out[2] == {"id": "3", "name": "web.bin", "progress": 100.0, "state": "web: completed", "done": True,
+                      "size": 5, "seeds": 0, "speed": 0, "kind": "webdl"}
+    assert s.calls[0][:2] == ("GET", TB + "/torrents/mylist")
+    assert s.calls[0][2]["params"] == {"bypass_cache": "true"}
+    assert s.calls[1][:2] == ("GET", TB + "/webdl/mylist")
+
+
+def test_tb_done_requires_present():
+    s = FakeSession(ok([{"id": 1, "name": "x", "progress": 1, "download_state": "completed",
+                         "download_finished": True, "download_present": False}]), ok([]))
+    assert Torbox("t", s).torrents()[0]["done"] is False
+
+
+def test_tb_progress_clamped():
+    s = FakeSession(ok([{"id": 1, "name": "x", "progress": 55.0, "download_state": "downloading"}]), ok([]))
+    assert Torbox("t", s).torrents()[0]["progress"] == 100.0
+
+
+def test_tb_add_magnet_multipart():
+    s = FakeSession(ok({"torrent_id": 1}))
+    Torbox("t", s).add_magnet("magnet:?xt=urn:btih:abc")
+    assert s.calls[0][:2] == ("POST", TB + "/torrents/createtorrent")
+    assert s.calls[0][2]["files"] == {"magnet": (None, "magnet:?xt=urn:btih:abc")}
+
+
+def test_tb_add_torrent_file(tmp_path="/tmp/debrid-test.torrent"):
+    with open(tmp_path, "wb") as f:
+        f.write(b"d8:announce0:e")
+    s = FakeSession(ok({"torrent_id": 1}))
+    Torbox("t", s).add_torrent_file(tmp_path)
+    name, fileobj = s.calls[0][2]["files"]["file"]
+    assert name == "debrid-test.torrent"
+    assert fileobj.closed
+
+
+def test_tb_delete_routes_on_kind():
+    s = FakeSession(ok(None), ok(None))
+    tb = Torbox("t", s)
+    tb.delete("7", "torrent")
+    tb.delete("3", "webdl")
+    assert s.calls[0][:2] == ("POST", TB + "/torrents/controltorrent")
+    assert s.calls[0][2]["json"] == {"torrent_id": 7, "operation": "delete"}
+    assert s.calls[1][:2] == ("POST", TB + "/webdl/controlwebdownload")
+    assert s.calls[1][2]["json"] == {"webdl_id": 3, "operation": "delete"}
+
+
+def test_tb_links_requestdl_per_file():
+    s = FakeSession(
+        ok({"id": 7, "files": [{"id": 0, "name": "dir/a.mkv", "short_name": "a.mkv"}, {"id": 1, "name": "b.srt"}]}),
+        ok("https://cdn/a"),
+        ok("https://cdn/b"),
+    )
+    out = Torbox("tok", s).links("7", "torrent")
+    assert out == [{"name": "a.mkv", "url": "https://cdn/a"}, {"name": "b.srt", "url": "https://cdn/b"}]
+    assert s.calls[0][:2] == ("GET", TB + "/torrents/mylist")
+    assert s.calls[0][2]["params"] == {"id": 7, "bypass_cache": "true"}
+    assert s.calls[1][:2] == ("GET", TB + "/torrents/requestdl")
+    assert s.calls[1][2]["params"] == {"token": "tok", "torrent_id": 7, "file_id": 0}
+
+
+def test_tb_links_webdl():
+    s = FakeSession(ok({"id": 3, "files": [{"id": 0, "name": "w.bin"}]}), ok("https://cdn/w"))
+    assert Torbox("tok", s).links("3", "webdl") == [{"name": "w.bin", "url": "https://cdn/w"}]
+    assert s.calls[0][1] == TB + "/webdl/mylist"
+    assert s.calls[1][1] == TB + "/webdl/requestdl"
+    assert s.calls[1][2]["params"] == {"token": "tok", "web_id": 3, "file_id": 0}
+
+
+def test_tb_links_missing_item():
+    s = FakeSession(ok(None))
+    assert Torbox("t", s).links("99", "torrent") == []
+
+
+def test_tb_add_link():
+    s = FakeSession(ok({"webdownload_id": 3}))
+    assert Torbox("t", s).add_link("https://hoster/x") is None
+    assert s.calls[0][:2] == ("POST", TB + "/webdl/createwebdownload")
+    assert s.calls[0][2]["data"] == {"link": "https://hoster/x"}
+
+
+def test_tb_success_false_raises_detail():
+    s = FakeSession(FakeResp(200, {"success": False, "error": "ACTIVE_LIMIT", "detail": "Too many active downloads.", "data": None}))
+    try:
+        Torbox("t", s).torrents()
+        assert False
+    except ApiError as e:
+        assert str(e) == "Too many active downloads."
+
+
+def test_tb_bad_token_is_invalid_key():
+    s = FakeSession(FakeResp(200, {"success": False, "error": "BAD_TOKEN", "detail": "The provided token is invalid.", "data": None}))
+    try:
+        Torbox("t", s).account()
+        assert False
+    except ApiError as e:
+        assert str(e) == "Invalid API key"
 
 
 if __name__ == "__main__":

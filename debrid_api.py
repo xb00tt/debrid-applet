@@ -104,3 +104,73 @@ class RealDebrid(_Client):
 
     def add_link(self, url):
         return self._json("POST", "/unrestrict/link", data={"link": url})["download"]
+
+
+class Torbox(_Client):
+    BASE = "https://api.torbox.app/v1/api"
+    name = "Torbox"
+    PLANS = {0: "Free", 1: "Essential", 2: "Pro", 3: "Standard"}
+    AUTH_ERRORS = ("NO_AUTH", "BAD_TOKEN", "AUTH_ERROR")
+
+    def _json(self, method, path, **kw):
+        body = self._req(method, path, **kw).json()
+        if not body.get("success"):
+            if body.get("error") in self.AUTH_ERRORS:
+                raise ApiError("Invalid API key")
+            raise ApiError(body.get("detail") or body.get("error") or "Torbox error")
+        return body.get("data")
+
+    def account(self):
+        u = self._json("GET", "/user/me") or {}
+        return {
+            "plan": self.PLANS.get(u.get("plan"), str(u.get("plan"))),
+            "expires": (u.get("premium_expires_at") or "")[:10],
+            "extra": f"{human_size(u.get('total_downloaded', 0))} downloaded",
+        }
+
+    def torrents(self):
+        out = []
+        for kind, path in (("torrent", "/torrents/mylist"), ("webdl", "/webdl/mylist")):
+            for t in self._json("GET", path, params={"bypass_cache": "true"}) or []:
+                state = t.get("download_state") or ""
+                out.append({
+                    "id": str(t["id"]),
+                    "name": t.get("name", ""),
+                    "progress": min(100.0, float(t.get("progress") or 0) * 100),  # API gives 0..1
+                    "state": state if kind == "torrent" else f"web: {state}",
+                    "done": bool(t.get("download_finished")) and bool(t.get("download_present")),
+                    "size": int(t.get("size") or 0),
+                    "seeds": int(t.get("seeds") or 0),
+                    "speed": int(t.get("download_speed") or 0),
+                    "kind": kind,
+                })
+        return out
+
+    def add_magnet(self, magnet):
+        self._json("POST", "/torrents/createtorrent", files={"magnet": (None, magnet)})
+
+    def add_torrent_file(self, path):
+        with open(path, "rb") as f:
+            self._json("POST", "/torrents/createtorrent", files={"file": (os.path.basename(path), f)})
+
+    def delete(self, tid, kind="torrent"):
+        if kind == "webdl":
+            self._json("POST", "/webdl/controlwebdownload", json={"webdl_id": int(tid), "operation": "delete"})
+        else:
+            self._json("POST", "/torrents/controltorrent", json={"torrent_id": int(tid), "operation": "delete"})
+
+    def links(self, tid, kind="torrent"):
+        if kind == "webdl":
+            list_path, dl_path, id_key = "/webdl/mylist", "/webdl/requestdl", "web_id"
+        else:
+            list_path, dl_path, id_key = "/torrents/mylist", "/torrents/requestdl", "torrent_id"
+        item = self._json("GET", list_path, params={"id": int(tid), "bypass_cache": "true"}) or {}
+        out = []
+        for f in item.get("files") or []:
+            url = self._json("GET", dl_path, params={"token": self.token, id_key: int(tid), "file_id": f["id"]})
+            out.append({"name": f.get("short_name") or f.get("name") or str(f["id"]), "url": url})
+        return out
+
+    def add_link(self, url):
+        self._json("POST", "/webdl/createwebdownload", data={"link": url})
+        return None
