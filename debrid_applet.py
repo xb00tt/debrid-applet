@@ -72,6 +72,14 @@ def add_label(text):
     return (os.path.basename(text.rstrip("/")) or text)[:60]
 
 
+def open_url(url):
+    """Hand an http(s) URL to the browser. Anything else (file:, javascript:, flags) is refused."""
+    if not isinstance(url, str) or not url.lower().startswith(("http://", "https://")):
+        return False
+    subprocess.Popen(["xdg-open", url])
+    return True
+
+
 def notify(title, body):
     Notify.Notification.new(title, body, "folder-download").show()
 
@@ -240,7 +248,7 @@ class ServiceTab(Gtk.Box):
             menu = Gtk.Menu()
             for link in links:
                 item = Gtk.MenuItem(label=link["name"][:80], sensitive=link["url"] is not None)
-                item.connect("activate", lambda _i, url=link["url"]: subprocess.Popen(["xdg-open", url]))
+                item.connect("activate", lambda _i, url=link["url"]: open_url(url))
                 menu.append(item)
             menu.append(Gtk.SeparatorMenuItem())
             copy_all = Gtk.MenuItem(label="Copy all links")

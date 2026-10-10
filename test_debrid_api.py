@@ -342,6 +342,17 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
     assert debrid_applet.load_config() == defaults
 
 
+def test_open_url_only_http():
+    import debrid_applet
+    calls = []
+    debrid_applet.subprocess.Popen = lambda args, **kw: calls.append(args)
+    assert debrid_applet.open_url("https://cdn.example/file.mkv") is True
+    assert debrid_applet.open_url("http://cdn.example/f") is True
+    for bad in ("file:///etc/passwd", "javascript:alert(1)", "-x", "", None):
+        assert debrid_applet.open_url(bad) is False
+    assert calls == [["xdg-open", "https://cdn.example/file.mkv"], ["xdg-open", "http://cdn.example/f"]]
+
+
 def test_add_label():
     import debrid_applet
     assert debrid_applet.add_label("magnet:?xt=urn:btih:abc&dn=Some+Name+S01") == "Some Name S01"
