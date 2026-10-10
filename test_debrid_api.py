@@ -925,7 +925,7 @@ def test_fetch_bytes_guards():
         def copyfile(self, source, outputfile):
             try:
                 super().copyfile(source, outputfile)
-            except BrokenPipeError:  # the client aborts the oversized download on purpose
+            except (BrokenPipeError, ConnectionResetError):  # the client aborts the oversized download on purpose
                 pass
     handler = lambda *a, **k: Quiet(*a, directory=root, **k)
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
