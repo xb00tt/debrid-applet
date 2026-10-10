@@ -255,7 +255,7 @@ def state_kind(state):
         return "done"
     if "upload" in s or "seed" in s:
         return "seed"
-    if any(w in s for w in ("download", "metadl", "checking", "queued", "magnet", "waiting", "compressing")):
+    if any(w in s for w in ("download", "metadl", "checking", "queued", "magnet", "waiting", "compressing", "adding")):
         return "active"
     return "done"  # store column of the checkbox; seconds an action message stays before polls overwrite it
 
@@ -267,6 +267,8 @@ class ServiceTab(Gtk.Box):
         self.done_ids = None  # None until first successful poll; then set of finished ids
         self.checked = set()  # ids with the checkbox on; survives refreshes
         self.torrents = []  # last poll, re-filtered on every keystroke
+        self._pending = []  # (expiry, placeholder row) for items just added, until the service lists them
+        self._known = set()
         self.active = 0
         self._is_busy = False
         self._applying = True  # suppress columns-changed while we build or restore the layout
@@ -470,10 +472,10 @@ class ServiceTab(Gtk.Box):
     def _targets(self):
         """Checked rows if any, else the highlighted row."""
         checked = [self._row(r) for r in self.store if r[CHECKED]]
-        if checked:
-            return checked
-        sel = self._selected()
-        return [sel] if sel else []
+        if not checked:
+            sel = self._selected()
+            checked = [sel] if sel else []
+        return [t for t in checked if not t["id"].startswith("pending:")]
 
     def _update_buttons(self):
         n = len(self._targets()) if self.client is not None and not self._is_busy else 0
@@ -516,7 +518,11 @@ class ServiceTab(Gtk.Box):
         self.account_label.set_text(
             f"{account['plan']} · expires {account['expires'] or '—'} · {account['extra']}")
         self.torrents = torrents
-        self.checked &= {t["id"] for t in torrents}
+        ids = {t["id"] for t in torrents}
+        if ids - self._known:  # something new showed up: placeholders have done their job
+            self._pending = []
+        self._known = ids
+        self.checked &= ids
         self._fill()
         self.active = sum(1 for t in torrents if not t["done"])
         if time.monotonic() >= self._hold_until:
@@ -535,7 +541,9 @@ class ServiceTab(Gtk.Box):
         kind = self.state_filter.get_active_id() or "all"
         selected = self._selected()
         self.store.clear()
-        for t in self.torrents:
+        now = time.monotonic()
+        self._pending = [(exp, row) for exp, row in self._pending if now < exp]
+        for t in self.torrents + [row for _exp, row in self._pending]:
             if q and q not in t["name"].lower() and q not in t["state"].lower():
                 continue
             if kind != "all" and state_kind(t["state"]) != kind:
@@ -676,7 +684,14 @@ class ServiceTab(Gtk.Box):
             if errors:
                 msg += " · failed: " + "; ".join(errors)
             self.say(msg, error=bool(errors))
+            for name in added:  # show something at once; the real row replaces it on the next poll
+                self._pending.append((time.monotonic() + 30, {
+                    "id": f"pending:{name}", "name": name, "progress": 0, "state": "adding…", "done": False,
+                    "size": 0, "seeds": 0, "speed": 0, "kind": "torrent", "up_speed": None, "peers": None,
+                    "ratio": None, "added": datetime.now(timezone.utc).isoformat(), "finished": "", "hash": ""}))
+            self._fill()
             self.app.refresh()
+            GLib.timeout_add_seconds(3, lambda: self.app.refresh() and False)  # services list new items with a lag
         self._run(work, done)
 
     def on_row_press(self, view, event):
@@ -839,6 +854,7 @@ class App:
         Gtk.Window.set_default_icon_name(APP_ID)
         self.cfg = load_config()
         self.lock = threading.Lock()
+        self._refresh_again = False
         self._settings_shown_for = None
         self.tabs = []
 
@@ -934,7 +950,9 @@ class App:
     def refresh(self, *_):
         """Poll every configured service once. Returns True so GLib keeps the timer."""
         if not self.lock.acquire(blocking=False):
+            self._refresh_again = True  # a poll is running; go again right after it
             return True
+        self._refresh_again = False
         tabs = [t for t in self.tabs if t.client is not None]
 
         def fetch():
@@ -954,6 +972,8 @@ class App:
                 t.render(acc, tors, e)
             active = sum(t.active for t in self.tabs)
             self.icon.set_label(f"{active}↓" if active else "")
+            if self._refresh_again:
+                self.refresh()
         run_async(fetch, done)
         return True
 

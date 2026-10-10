@@ -455,6 +455,7 @@ def test_state_kind_buckets():
     k = debrid_applet.state_kind
     assert k("downloading") == "active" and k("metaDL") == "active" and k("queued") == "active"
     assert k("waiting_files_selection") == "active" and k("magnet_conversion") == "active"
+    assert k("adding…") == "active"
     assert k("downloaded") == "done" and k("cached") == "done" and k("web: completed") == "done"
     assert k("uploading (no peers)") == "seed"
     assert k("stalled (no seeds)") == "warn" and k("paused") == "warn"
