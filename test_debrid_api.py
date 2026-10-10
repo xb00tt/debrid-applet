@@ -531,8 +531,10 @@ def test_column_layout_per_tab_and_migration():
     tb["hidden"].append("ul")
     assert "ul" not in cols["Real-Debrid"]["hidden"]  # independent copies
     fresh = {}
-    assert debrid_applet.column_layout(fresh, "Real-Debrid") == {"order": [], "hidden": ["ul", "peers", "ratio"]}
-    assert debrid_applet.column_layout(fresh, "Torbox") == {"order": [], "hidden": []}
+    assert debrid_applet.column_layout(fresh, "Real-Debrid") == {"order": [], "hidden": ["ul", "peers", "ratio"], "sort": ["added", "desc"]}
+    assert debrid_applet.column_layout(fresh, "Torbox") == {"order": [], "hidden": [], "sort": ["added", "desc"]}
+    never_sorted = {"Torbox": {"order": [], "hidden": []}}
+    assert debrid_applet.column_layout(never_sorted, "Torbox")["sort"] == ["added", "desc"]
     assert set(fresh) == {"Torbox", "Real-Debrid"}
 
 

@@ -272,7 +272,9 @@ def column_layout(columns, name):
         flat = {k: columns.pop(k) for k in ("order", "hidden", "sort") if k in columns}
         for n in ("Torbox", "Real-Debrid"):
             columns.setdefault(n, json.loads(json.dumps(flat)))
-    return columns.setdefault(name, {"order": [], "hidden": list(DEFAULT_HIDDEN.get(name, []))})
+    layout = columns.setdefault(name, {"order": [], "hidden": list(DEFAULT_HIDDEN.get(name, []))})
+    layout.setdefault("sort", ["added", "desc"])  # newest first until the user picks another header
+    return layout
 
 
 def state_kind(state):
