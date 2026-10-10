@@ -453,8 +453,9 @@ class ServiceTab(Gtk.Box):
         box.set_property("margin", 12)
         hint = Gtk.Label(xalign=0, label="One per line:  magnet:?xt=urn:btih:…   https://…   http://…")
         hint.get_style_context().add_class("dim-label")
-        view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR)
-        scroller = Gtk.ScrolledWindow(vexpand=True)
+        view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, left_margin=8, right_margin=8,
+                            top_margin=6, bottom_margin=6)
+        scroller = Gtk.ScrolledWindow(vexpand=True, shadow_type=Gtk.ShadowType.IN)
         scroller.add(view)
         box.pack_start(hint, False, False, 0)
         box.pack_start(scroller, True, True, 0)
