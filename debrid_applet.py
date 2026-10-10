@@ -158,7 +158,9 @@ CHECKED, STATUS_HOLD = 6, 8
 NUMERIC = ("dl", "ul", "seeds", "peers", "ratio", "size")  # right-aligned
 PALETTE = {"active": "#3b82f6", "done": "#22c55e", "seed": "#14b8a6", "warn": "#f59e0b", "error": "#ef4444"}
 CSS = b"""
-treeview.view.progressbar { background-color: #e8761b; border-color: #e8761b; }
+treeview.view.progressbar { background-color: #e8761b; border-color: #e8761b; color: #ffffff; }
+treeview.view.progressbar:selected { background-color: #ffffff; border-color: #ffffff; color: #e8761b; }
+treeview.view.trough:selected { background-color: rgba(0, 0, 0, 0.25); color: #ffffff; }
 treeview.view { font-feature-settings: 'tnum'; }
 """
 
