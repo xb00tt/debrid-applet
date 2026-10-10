@@ -95,6 +95,16 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
       javascript:fetch('http://127.0.0.1:PORT/add?token=TOKEN&service=Torbox&magnet='+encodeURIComponent(location.href),{mode:'no-cors'})
 
   `service` is optional; without it magnets cached on Torbox go to Torbox and the rest to the first configured service.
+- **Command line.** The installed script forwards flags to the running instance:
+
+      python3 ~/.local/share/debrid-applet/debrid_applet.py --toggle
+      python3 ~/.local/share/debrid-applet/debrid_applet.py --log
+      python3 ~/.local/share/debrid-applet/debrid_applet.py --service Torbox --add 'magnet:?xt=…' 'https://hoster/file'
+
+  Without `--service`, cached-on-Torbox routing applies. Bind `--toggle` to a Cinnamon keyboard shortcut for a global hotkey.
+- **Send to.** Right-click → Send to → another service re-adds the ticked items there by magnet (not from AllDebrid, which gives no hashes).
+- **Export / import.** The ⋮ menu in the toolbar exports every item's magnet (`magnet<TAB>name` per line) to a file,
+  imports such a file (or any file with one magnet or link per line), or copies all magnets to the clipboard.
 - **Expiry warning.** One notification per service when premium ends within 7 days.
 - **Activity log.** Clock icon in the toolbar (or `Ctrl+L`): status messages and notifications with a timestamp,
   newest last, with Refresh / Open file / Clear. Kept in `~/.local/share/debrid-applet/activity.log`. Settings choose

@@ -798,6 +798,27 @@ def test_route_items():
     assert da.route_items(items, None) == {True: [], False: items}
 
 
+def test_parse_cli():
+    import debrid_applet as da
+    assert da.parse_cli([]) == {"toggle": False, "log": False, "service": "", "items": []}
+    assert da.parse_cli(["--toggle"])["toggle"] is True
+    out = da.parse_cli(["--service", "AllDebrid", "--add", "magnet:?xt=a", "https://x", "--log"])
+    assert out == {"toggle": False, "log": True, "service": "AllDebrid", "items": ["magnet:?xt=a", "https://x"]}
+    assert da.parse_cli(["--add"])["items"] == []
+
+
+def test_magnet_export_import(path="/tmp/debrid-test-magnets.txt"):
+    import debrid_applet as da
+    rows = [{"hash": "abc", "name": "A"}, {"hash": "", "name": "B"}, {"hash": "def", "name": "C\tD"}]
+    da.write_magnets(path, rows)
+    text = open(path).read()
+    assert text == "magnet:?xt=urn:btih:abc&dn=A\tA\nmagnet:?xt=urn:btih:def&dn=C%09D\tC D\n"
+    assert da.read_magnets(path) == ["magnet:?xt=urn:btih:abc&dn=A", "magnet:?xt=urn:btih:def&dn=C%09D"]
+    with open(path, "w") as f:
+        f.write("# comment\n\nmagnet:?xt=urn:btih:zzz\nhttps://host/f\n")
+    assert da.read_magnets(path) == ["magnet:?xt=urn:btih:zzz", "https://host/f"]
+
+
 def test_add_label():
     import debrid_applet
     assert debrid_applet.add_label("magnet:?xt=urn:btih:abc&dn=Some+Name+S01") == "Some Name S01"

@@ -209,6 +209,46 @@ def totals_text(torrents, shown, ticked):
     return " · ".join(parts)
 
 
+def parse_cli(args):
+    """--toggle, --log, --service NAME, --add ITEM [ITEM…]."""
+    out = {"toggle": False, "log": False, "service": "", "items": []}
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--toggle":
+            out["toggle"] = True
+        elif a == "--log":
+            out["log"] = True
+        elif a == "--service" and i + 1 < len(args):
+            i += 1
+            out["service"] = args[i]
+        elif a == "--add":
+            while i + 1 < len(args) and not args[i + 1].startswith("--"):
+                i += 1
+                out["items"].append(args[i])
+        i += 1
+    return out
+
+
+def write_magnets(path, torrents):
+    """One 'magnet<TAB>name' line per item that has an info hash."""
+    with open(path, "w", encoding="utf-8") as f:
+        for t in torrents:
+            if t.get("hash"):
+                f.write(f"{magnet_for(t['hash'], t['name'])}\t{t['name'].replace(chr(9), ' ')}\n")
+
+
+def read_magnets(path):
+    """First tab-separated field of every non-empty, non-comment line: magnets or links."""
+    out = []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                out.append(line.split("\t", 1)[0].strip())
+    return out
+
+
 def route_items(items, checker):
     """Split items into {True: cached on the checker's service, False: the rest}. checker needs check_cached()."""
     hashes = {i: magnet_hash(i) for i in items if i.lower().startswith("magnet:")}
@@ -489,6 +529,18 @@ class ServiceTab(Gtk.Box):
                               ("emblem-system-symbolic", "Settings", app.open_settings),
                               ("document-open-recent-symbolic", "Activity log (Ctrl+L)", app.open_log)):
             row.pack_start(icon_button(icon, tip, cb), False, False, 0)
+        more = Gtk.MenuButton(tooltip_text="More")
+        more.add(Gtk.Image.new_from_icon_name("view-more-symbolic", Gtk.IconSize.BUTTON))
+        more.set_relief(Gtk.ReliefStyle.NONE)
+        more_menu = Gtk.Menu()
+        for label, cb in (("Export magnets…", self.on_export), ("Import magnets or links…", self.on_import),
+                          ("Copy all magnets", self.on_copy_all_magnets)):
+            item = Gtk.MenuItem(label=label)
+            item.connect("activate", lambda _i, cb=cb: cb())
+            more_menu.append(item)
+        more_menu.show_all()
+        more.set_popup(more_menu)
+        row.pack_start(more, False, False, 0)
         self.play_btn = text_button("media-playback-start-symbolic", "Play", self.on_play)
         self.links_btn = text_button("view-list-symbolic", "Files", self.on_files)
         self.copy_btn = text_button("edit-copy-symbolic", "Copy links", self.on_copy_links)
@@ -1108,6 +1160,16 @@ class ServiceTab(Gtk.Box):
                                                                  ("Reannounce", "reannounce"))]
         entries += [(None, None, True), ("Delete", self.on_delete, n >= 1)]
         menu = Gtk.Menu()
+        others = [t for t in self.app.tabs if t is not self and t.client is not None]
+        if others:
+            send = Gtk.MenuItem(label="Send to", sensitive=n >= 1 and all(t["hash"] for t in self._targets()))
+            sub_menu = Gtk.Menu()
+            for other in others:
+                item = Gtk.MenuItem(label=other.name)
+                item.connect("activate", lambda _i, o=other: self.on_send_to(o))
+                sub_menu.append(item)
+            send.set_submenu(sub_menu)
+            menu.append(send)
         for label, cb, ok in entries:
             if label is None:
                 menu.append(Gtk.SeparatorMenuItem())
@@ -1120,6 +1182,57 @@ class ServiceTab(Gtk.Box):
         menu.show_all()
         menu.popup_at_pointer(event)
         return True
+
+    def on_export(self):
+        if self.client is None:
+            return
+        dlg = Gtk.FileChooserNative.new("Export magnets", self.app.window, Gtk.FileChooserAction.SAVE, "Export", "Cancel")
+        dlg.set_current_name(f"{self.name.lower()}-magnets.txt")
+        dlg.set_do_overwrite_confirmation(True)
+        path = dlg.get_filename() if dlg.run() == Gtk.ResponseType.ACCEPT else None
+        dlg.destroy()
+        if not path:
+            return
+        try:
+            write_magnets(path, self.torrents)
+            n = sum(1 for t in self.torrents if t.get("hash"))
+            self.say(f"Exported {n} magnet(s) to {path}" + (" (AllDebrid gives no hashes)" if n == 0 and self.name == "AllDebrid" else ""))
+        except OSError as e:
+            self.say(f"Export failed: {e.strerror}", error=True)
+
+    def on_import(self):
+        if self.client is None:
+            return
+        dlg = Gtk.FileChooserNative.new("Import magnets or links", self.app.window, Gtk.FileChooserAction.OPEN, "Import", "Cancel")
+        path = dlg.get_filename() if dlg.run() == Gtk.ResponseType.ACCEPT else None
+        dlg.destroy()
+        if not path:
+            return
+        try:
+            items = read_magnets(path)
+        except OSError as e:
+            self.say(f"Import failed: {e.strerror}", error=True)
+            return
+        if not items:
+            self.say("Nothing to import in that file")
+            return
+        self.add_items(items)
+
+    def on_copy_all_magnets(self):
+        magnets = [magnet_for(t["hash"], t["name"]) for t in self.torrents if t.get("hash")]
+        if magnets:
+            copy_text("\n".join(magnets))
+        self.say(f"Copied {len(magnets)} magnet(s)")
+
+    def on_send_to(self, target):
+        """Re-add the targets' magnets on another service."""
+        magnets = [magnet_for(t["hash"], t["name"]) for t in self._targets() if t["hash"]]
+        if not magnets:
+            self.say("No hash known for the selection")
+            return
+        target.say(f"{len(magnets)} item(s) sent from {self.name}")
+        target.add_items(magnets)
+        self.say(f"Sent {len(magnets)} item(s) to {target.name}")
 
     def on_copy_magnet(self, _w):
         magnets = [magnet_for(t["hash"], t["name"]) for t in self._targets()]
@@ -1833,18 +1946,36 @@ class WatchFolder:
 
 
 def main():
-    """One instance only: a second launch just raises the existing window."""
-    gapp = Gtk.Application(application_id=DBUS_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
+    """One instance only: a second launch is forwarded to the running one. With no flags it raises the window;
+    --toggle, --log, --service NAME and --add ITEM… drive it from the shell or a hotkey."""
+    gapp = Gtk.Application(application_id=DBUS_ID, flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
     state = {}
 
-    def activate(a):
-        if "app" not in state:
+    def on_cmdline(a, cmdline):
+        opts = parse_cli(cmdline.get_arguments()[1:])
+        first = "app" not in state
+        if first:
             state["app"] = App(a)
             a.hold()  # keep running while the window is hidden
-        else:
-            state["app"].window.show_all()
-            state["app"].window.present()
-    gapp.connect("activate", activate)
+        app = state["app"]
+        if opts["toggle"]:
+            app.toggle_window()
+        elif not first and not opts["items"] and not opts["log"]:
+            app.window.show_all()
+            app.window.present()
+        if opts["log"]:
+            app.open_log()
+        if opts["items"]:
+            tab = app.tab_named(opts["service"]) or next((t for t in app.tabs if t.client), None)
+            if tab is None:
+                return 1
+            log_event(tab.name, f"Command line: {len(opts['items'])} item(s)")
+            if opts["service"]:
+                tab.add_items(opts["items"])
+            else:
+                app.add_routed(opts["items"], tab)
+        return 0
+    gapp.connect("command-line", on_cmdline)
     gapp.run(sys.argv)
 
 
