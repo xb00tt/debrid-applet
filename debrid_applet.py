@@ -2,13 +2,14 @@
 """Tray control panel for Torbox and Real-Debrid."""
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from urllib.parse import parse_qs, quote, urlparse
 
 import gi
@@ -23,10 +24,15 @@ from gi.repository import Gdk, Gio, GLib, Gtk, Notify, Pango, XApp  # noqa: E402
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from debrid_api import AllDebrid, ApiError, RealDebrid, Torbox, human_size, magnet_hash  # noqa: E402
+from debrid_local_api import LocalApi  # noqa: E402
 
 APP_ID = "debrid-applet"  # WM_CLASS, icon name and .desktop basename all match
 DBUS_ID = "io.github.xb00tt.DebridApplet"  # single-instance guard
 PLAYERS = ("mpv", "vlc", "celluloid", "smplayer", "totem")
+SUB_FLAG = {"mpv": "--sub-file={}", "celluloid": "--mpv-sub-file={}", "smplayer": "-sub {}", "vlc": "--sub-file={}"}
+SUB_EXT = (".srt", ".ass", ".vtt", ".sub")
+SERVICES = ("Torbox", "Real-Debrid", "AllDebrid")
+EXPIRY_WARN_DAYS = 7
 VIDEO_EXT = (".mkv", ".mp4", ".avi", ".m4v", ".webm", ".mov", ".ts", ".wmv", ".flv")
 GLib.set_prgname(APP_ID)
 
@@ -36,7 +42,11 @@ EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "no
                 "watch_clipboard": True, "columns": {}, "window": [],  # columns: per-service, see column_layout()
                 "remember_filter": True, "filters": {},  # filters: last state-filter choice per service
                 "dblclick_play": False,  # double-click plays videos instead of opening the file panel
-                "dblclick_asked": False}  # the one-time offer to turn dblclick_play on has been shown
+                "dblclick_asked": False,  # the one-time offer to turn dblclick_play on has been shown
+                "watch_dir": "", "watch_service": "Torbox",  # .torrent files dropped here get uploaded there
+                "auto_download": False, "download_dir": "~/Downloads",  # finished items -> aria2c/wget into here
+                "http_port": 0,  # loopback API port, 0 = off
+                "notified_expiry": {}}  # service -> expiry date already warned about
 POLL_FAST, POLL_SLOW = 8, 60  # seconds between polls while something is active / when everything is idle
 INVALID_KEY = "Invalid API key"
 
@@ -115,6 +125,42 @@ def video_links(links):
     """Playable entries from a links() result: video files first, else any real file but the zip bundle."""
     usable = [l for l in links if l["url"] and not l["name"].startswith("All files")]
     return [l for l in usable if l["name"].lower().endswith(VIDEO_EXT)] or usable
+
+
+def days_until(date_str):
+    """Days from today to a YYYY-MM-DD date; None when empty or unparsable."""
+    try:
+        return (date.fromisoformat((date_str or "")[:10]) - date.today()).days
+    except ValueError:
+        return None
+
+
+def pick_subtitle(video_name, links):
+    """URL of the subtitle that matches the video's name; else the only subtitle; else None."""
+    subs = [l for l in links if l.get("url") and l["name"].lower().endswith(SUB_EXT)]
+    stem = os.path.splitext(os.path.basename(video_name))[0].lower()
+    for s in subs:
+        if os.path.splitext(os.path.basename(s["name"]))[0].lower().startswith(stem):
+            return s["url"]
+    return subs[0]["url"] if len(subs) == 1 else None
+
+
+def player_cmd(player, url, sub_url=None):
+    cmd = [player]
+    if sub_url and player in SUB_FLAG:
+        cmd += SUB_FLAG[player].format(sub_url).split(" ", 1) if player == "smplayer" else [SUB_FLAG[player].format(sub_url)]
+    return cmd + [url]
+
+
+def download_command(urls, dest, tool):
+    """argv for a resumable bulk download into dest with aria2c (8 connections) or wget."""
+    if tool == "aria2c":
+        return ["aria2c", "-c", "-x", "8", "-s", "8", f"--dir={dest}", *urls]
+    return ["wget", "-c", "-P", dest, *urls]
+
+
+def safe_dirname(name):
+    return re.sub(r"[^\w.\- \[\]()]", "_", name).strip()[:120] or "download"
 
 
 def strict_videos(links):
@@ -604,6 +650,12 @@ class ServiceTab(Gtk.Box):
             return
         self.account_label.set_text(
             f"{account['plan']} · expires {account['expires'] or '—'} · {account['extra']}")
+        days = days_until(account["expires"])
+        warned = self.app.cfg.setdefault("notified_expiry", {})
+        if days is not None and days <= EXPIRY_WARN_DAYS and warned.get(self.name) != account["expires"]:
+            warned[self.name] = account["expires"]
+            save_config(self.app.cfg)
+            notify(f"{self.name}: premium ends in {days} day(s)", f"Expires {account['expires']}")
         self.torrents = torrents
         ids = {t["id"] for t in torrents}
         if ids - self._known:  # something new showed up: placeholders have done their job
@@ -617,11 +669,33 @@ class ServiceTab(Gtk.Box):
 
         prev = self.done_ids
         self.done_ids = {t["id"] for t in torrents if t["done"]}
-        if prev is not None and self.app.cfg["notify_done"]:
+        if prev is not None:
             for t in torrents:
                 if t["done"] and t["id"] not in prev:
-                    notify(f"{self.name}: finished", t["name"],
-                           [("Open files", lambda t=t: self.app.show_files(self, t))])
+                    if self.app.cfg["notify_done"]:
+                        notify(f"{self.name}: finished", t["name"],
+                               [("Open files", lambda t=t: self.app.show_files(self, t))])
+                    if self.app.cfg.get("auto_download"):
+                        self.auto_download(t)
+
+    def auto_download(self, t):
+        """Fetch the finished item's links and start a resumable bulk download into its own folder."""
+        tool = "aria2c" if shutil.which("aria2c") else "wget"
+        dest = os.path.join(os.path.expanduser(self.app.cfg.get("download_dir") or "~/Downloads"), safe_dirname(t["name"]))
+
+        def start(links, err):
+            if err:
+                return
+            urls = [l["url"] for l in links if l["url"] and not l["name"].startswith("All files")]
+            if not urls:
+                self.say(f"Auto-download: no links for {t['name'][:40]}", error=True)
+                return
+            os.makedirs(dest, exist_ok=True)
+            log = open(os.path.join(HERE, f"download-{safe_dirname(t['name'])[:40]}.log"), "ab")
+            subprocess.Popen(download_command(urls, dest, tool), stdout=log, stderr=log)
+            self.say(f"Auto-download: {len(urls)} file(s) via {tool} into {dest}")
+            notify(f"{self.name}: downloading {len(urls)} file(s)", dest)
+        self._run(lambda: self.client.links(t["id"], t["kind"]), start)
 
     def on_state_filter(self, combo):
         if self.app.cfg.get("remember_filter"):
@@ -748,8 +822,9 @@ class ServiceTab(Gtk.Box):
         dlg.destroy()
         self.add_items(paths)
 
-    def add_items(self, items):
-        """Add magnets, links and .torrent paths sequentially in one worker; report counts in the status line."""
+    def add_items(self, items, after=None):
+        """Add magnets, links and .torrent paths sequentially in one worker; report counts in the status line.
+        after(added_labels, errors) runs on the main loop when done."""
         if not items or self.client is None:
             return
 
@@ -794,6 +869,8 @@ class ServiceTab(Gtk.Box):
                     break
             self.app.refresh()
             GLib.timeout_add_seconds(3, lambda: self.app.refresh() and False)  # services list new items with a lag
+            if after:
+                after(added, errors)
         self._run(work, done)
 
     def on_row_press(self, view, event):
@@ -839,15 +916,15 @@ class ServiceTab(Gtk.Box):
             copy_text("\n".join(magnets))
         self.say(f"Copied {len(magnets)} magnet link(s)" if magnets else "No hash known for the selection")
 
-    def _play_one_of(self, vids):
-        """One candidate plays at once; several show a picker."""
+    def _play_one_of(self, vids, links=()):
+        """One candidate plays at once; several show a picker. links lets play() find a matching subtitle."""
         if len(vids) == 1:
-            self.play(vids[0]["url"])
+            self.play(vids[0]["url"], vids[0]["name"], links)
             return
         menu = Gtk.Menu()
         for v in vids:
             item = Gtk.MenuItem(label=v["name"][:80])
-            item.connect("activate", lambda _i, url=v["url"]: self.play(url))
+            item.connect("activate", lambda _i, v=v: self.play(v["url"], v["name"], links))
             menu.append(item)
         menu.show_all()
         menu.popup_at_pointer(None)
@@ -863,7 +940,7 @@ class ServiceTab(Gtk.Box):
                 return
             vids = video_links(links)
             if vids:
-                self._play_one_of(vids)
+                self._play_one_of(vids, links)
             else:
                 self.say("Nothing playable yet (not finished?)")
         self._run(lambda: self.client.links(t["id"], t["kind"]), pick)
@@ -882,7 +959,7 @@ class ServiceTab(Gtk.Box):
                 return
             vids = strict_videos(links) if self.app.player else []
             if vids and cfg.get("dblclick_play"):
-                self._play_one_of(vids)
+                self._play_one_of(vids, links)
             elif vids and not cfg.get("dblclick_asked"):
                 self._offer_dblclick_play(t, links, vids)
             else:
@@ -905,18 +982,20 @@ class ServiceTab(Gtk.Box):
         self.app.cfg["dblclick_play"] = answer == Gtk.ResponseType.YES
         save_config(self.app.cfg)
         if answer == Gtk.ResponseType.YES:
-            self._play_one_of(vids)
+            self._play_one_of(vids, links)
         else:
             self._files_dialog(t, links)
 
-    def play(self, url):
+    def play(self, url, name="", links=()):
+        """Hand a video URL to the player, with its subtitle file when the item has a matching one."""
         if not self.app.player:
             self.say("No media player found (mpv, vlc, celluloid, smplayer or totem)")
             return
         if not url or not url.lower().startswith(("http://", "https://")):
             return
-        subprocess.Popen([self.app.player, url])
-        self.say(f"Playing in {self.app.player}")
+        sub_url = pick_subtitle(name, links) if links else None
+        subprocess.Popen(player_cmd(self.app.player, url, sub_url))
+        self.say(f"Playing in {self.app.player}" + (" with subtitles" if sub_url else ""))
 
     def on_files(self, _w):
         targets = self._targets()
@@ -975,14 +1054,14 @@ class ServiceTab(Gtk.Box):
             self.say(f"aria2c command for {len(urls)} file(s) copied")
 
         for icon, label, cb in (("web-browser-symbolic", "Download via browser", lambda: [open_url(u) for u in chosen()]),
-                                ("media-playback-start-symbolic", "Play", lambda: chosen() and self.play(chosen()[0])),
+                                ("media-playback-start-symbolic", "Play", lambda: chosen() and self.play(chosen()[0], "", links)),
                                 ("edit-copy-symbolic", "Copy links", copy),
                                 ("utilities-terminal-symbolic", "aria2c command", copy_aria2)):
             actions.pack_start(text_button(icon, label, lambda _b, cb=cb: cb()), False, False, 0)
         box.pack_start(actions, False, False, 0)
         dlg.add_button("Close", Gtk.ResponseType.CLOSE)
         dlg.connect("response", lambda d, _r: d.destroy())
-        view.connect("row-activated", lambda v, path, _c: self.play(store[path][3]) if self.app.player else open_url(store[path][3]))
+        view.connect("row-activated", lambda v, path, _c: self.play(store[path][3], store[path][1], links) if self.app.player else open_url(store[path][3]))
         dlg.show_all()
         self.say(f"{len(links)} file(s)")
 
@@ -1114,6 +1193,8 @@ class App:
             menu.append(item)
         menu.show_all()
         self.icon.set_secondary_menu(menu)
+        self.watcher = WatchFolder(self)
+        self.api = None
 
         w, h = (self.cfg.get("window") or [1100, 560])[:2]
         self.window = Gtk.Window(title="Debrid", default_width=w, default_height=h)
@@ -1127,9 +1208,11 @@ class App:
         self.window.add(self.notebook)
         self.build_tabs()
 
-        if not (self.cfg["torbox_key"] or self.cfg["realdebrid_key"]):
+        if not any(self.cfg[k] for k in ("torbox_key", "realdebrid_key", "alldebrid_key")):
             self.open_settings()
         self.refresh()  # every poll schedules the next one (see _schedule)
+        self.watcher.start()
+        self.start_api()
 
     def build_tabs(self):
         for page in list(self.notebook.get_children()):
@@ -1146,6 +1229,33 @@ class App:
 
     def current_tab(self):
         return self.tabs[self.notebook.get_current_page()]
+
+    def tab_named(self, name):
+        return next((t for t in self.tabs if t.name == name), None)
+
+    def start_api(self):
+        if self.api:
+            self.api.stop()
+            self.api = None
+        port = int(self.cfg.get("http_port") or 0)
+        if not port:
+            return
+
+        def on_add(service, items):
+            tab = self.tab_named(service) or next((t for t in self.tabs if t.client), None)
+            if tab is None or tab.client is None:
+                return 0
+            GLib.idle_add(tab.add_items, list(items))
+            return len(items)
+
+        def status():
+            return {t.name: {"active": t.active, "items": len(t.torrents)} for t in self.tabs if t.client}
+        try:
+            self.api = LocalApi(port, on_add, lambda: GLib.idle_add(self.toggle_window), status)
+            self.api.start()
+        except OSError as e:
+            self.api = None
+            notify("Local API not started", f"Port {port}: {e}")
 
     def on_key(self, _w, event):
         tab = self.current_tab()
@@ -1268,25 +1378,43 @@ class App:
         TEST = 1
         dlg.add_buttons("Test keys", TEST, "Cancel", Gtk.ResponseType.CANCEL, "Save", Gtk.ResponseType.OK)
         grid = Gtk.Grid(row_spacing=6, column_spacing=6, margin=12)
-        entries = {}
-        for i, (key, label) in enumerate((("torbox_key", "Torbox API key"),
-                                          ("realdebrid_key", "Real-Debrid API key"),
-                                          ("alldebrid_key", "AllDebrid API key"))):
-            entry = Gtk.Entry(text=self.cfg[key], visibility=False, width_chars=48)
-            grid.attach(Gtk.Label(label=label, xalign=0), 0, i, 1, 1)
-            grid.attach(entry, 1, i, 1, 1)
+        row = 0
+        entries, checks = {}, {}
+        for key, label, secret in (("torbox_key", "Torbox API key", True),
+                                   ("realdebrid_key", "Real-Debrid API key", True),
+                                   ("alldebrid_key", "AllDebrid API key", True),
+                                   ("watch_dir", "Watch folder for .torrent files", False),
+                                   ("download_dir", "Download folder (auto-download)", False)):
+            entry = Gtk.Entry(text=str(self.cfg.get(key) or ""), visibility=not secret, width_chars=48)
+            grid.attach(Gtk.Label(label=label, xalign=0), 0, row, 1, 1)
+            grid.attach(entry, 1, row, 1, 1)
             entries[key] = entry
-        checks = {}
-        for i, (key, label) in enumerate((("notify_added", "Notify when torrent added"),
-                                          ("notify_done", "Notify when download finishes on service"),
-                                          ("watch_clipboard", "Watch clipboard for magnet links"),
-                                          ("remember_filter", "Remember the state filter between runs"),
-                                          ("dblclick_play", "Double-click plays videos (otherwise opens Files)")), start=3):
-            check = Gtk.CheckButton(label=label, active=bool(self.cfg[key]))
-            grid.attach(check, 0, i, 2, 1)
+            row += 1
+        watch_service = Gtk.ComboBoxText()
+        for name in SERVICES:
+            watch_service.append(name, name)
+        watch_service.set_active_id(self.cfg.get("watch_service") or SERVICES[0])
+        grid.attach(Gtk.Label(label="Upload watched files to", xalign=0), 0, row, 1, 1)
+        grid.attach(watch_service, 1, row, 1, 1)
+        row += 1
+        port = Gtk.SpinButton.new_with_range(0, 65535, 1)
+        port.set_value(int(self.cfg.get("http_port") or 0))
+        port.set_tooltip_text("0 = off. Then: curl 'http://127.0.0.1:PORT/add?service=Torbox&magnet=…'")
+        grid.attach(Gtk.Label(label="Local API port (0 = off)", xalign=0), 0, row, 1, 1)
+        grid.attach(port, 1, row, 1, 1)
+        row += 1
+        for key, label in (("notify_added", "Notify when torrent added"),
+                           ("notify_done", "Notify when download finishes on service"),
+                           ("watch_clipboard", "Watch clipboard for magnet links"),
+                           ("remember_filter", "Remember the state filter between runs"),
+                           ("dblclick_play", "Double-click plays videos (otherwise opens Files)"),
+                           ("auto_download", "Download finished items automatically (aria2c, else wget)")):
+            check = Gtk.CheckButton(label=label, active=bool(self.cfg.get(key)))
+            grid.attach(check, 0, row, 2, 1)
             checks[key] = check
+            row += 1
         result = Gtk.Label(xalign=0, wrap=True)
-        grid.attach(result, 0, 8, 2, 1)
+        grid.attach(result, 0, row, 2, 1)
         dlg.get_content_area().add(grid)
         dlg.show_all()
 
@@ -1319,12 +1447,68 @@ class App:
         while (resp := dlg.run()) == TEST:
             test_keys()
         if resp == Gtk.ResponseType.OK:
-            self.cfg = {**{k: e.get_text().strip() for k, e in entries.items()},
-                        **{k: c.get_active() for k, c in checks.items()}}
+            self.cfg.update({k: e.get_text().strip() for k, e in entries.items()})
+            self.cfg.update({k: c.get_active() for k, c in checks.items()})
+            self.cfg["watch_service"] = watch_service.get_active_id() or SERVICES[0]
+            self.cfg["http_port"] = int(port.get_value())
             save_config(self.cfg)
             self.build_tabs()
             self.refresh()
+            self.watcher.start()
+            self.start_api()
         dlg.destroy()
+
+
+class WatchFolder:
+    """Uploads every .torrent that appears in cfg['watch_dir'] to cfg['watch_service'], then moves it to done/."""
+
+    def __init__(self, app):
+        self.app = app
+        self.monitor = None
+        self.dir = ""
+        self.busy = set()
+
+    def start(self):
+        self.stop()
+        self.dir = os.path.expanduser(self.app.cfg.get("watch_dir") or "")
+        if not self.dir or not os.path.isdir(self.dir):
+            return
+        self.monitor = Gio.File.new_for_path(self.dir).monitor_directory(Gio.FileMonitorFlags.NONE, None)
+        self.monitor.connect("changed", self.on_change)
+        for name in sorted(os.listdir(self.dir)):
+            self.consider(os.path.join(self.dir, name))
+
+    def stop(self):
+        if self.monitor:
+            self.monitor.cancel()
+            self.monitor = None
+
+    def on_change(self, _monitor, gfile, _other, event):
+        if event in (Gio.FileMonitorEvent.CHANGES_DONE_HINT, Gio.FileMonitorEvent.MOVED_IN, Gio.FileMonitorEvent.CREATED):
+            path = gfile.get_path()
+            GLib.timeout_add(1500, lambda: self.consider(path) and False)  # let the writer finish first
+
+    def consider(self, path):
+        if not path or not path.lower().endswith(".torrent") or not os.path.isfile(path) or path in self.busy:
+            return False
+        tab = self.app.tab_named(self.app.cfg.get("watch_service"))
+        if tab is None or tab.client is None:
+            return False
+        self.busy.add(path)
+        label = add_label(path)
+
+        def after(_added, errors):
+            self.busy.discard(path)
+            if any(e.startswith(label + ":") for e in errors):
+                return  # left in place; fix the file or the key and it is retried on next start
+            done = os.path.join(self.dir, "done")
+            os.makedirs(done, exist_ok=True)
+            try:
+                shutil.move(path, os.path.join(done, os.path.basename(path)))
+            except OSError as e:
+                tab.say(f"Watch folder: could not move {label}: {e.strerror}", error=True)
+        tab.add_items([path], after=after)
+        return True
 
 
 def main():

@@ -70,16 +70,41 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 
 `Delete` · `Ctrl+A` tick all / none · `Ctrl+C` copy links · `Ctrl+F` filter · `Ctrl+R` refresh · `Esc` clear filter, then hide window
 
+## Power features
+
+- **Watch folder.** Point Settings at a folder; every `.torrent` that lands there is uploaded to the service you
+  pick and moved to `done/` inside that folder. Files already there are picked up at start; a failed upload stays put.
+- **Auto-download.** With "Download finished items automatically" on, each item that finishes on a service is
+  pulled into `<download folder>/<item name>/` with `aria2c` (8 connections) if installed, else `wget -c`.
+  Output goes to `download-<name>.log` next to the applet; a notification tells you when it starts.
+- **Local API.** Set a port in Settings (0 = off); the applet listens on `127.0.0.1` only.
+
+      curl 'http://127.0.0.1:PORT/add?service=Torbox&magnet=magnet:?xt=urn:btih:…'
+      curl -X POST --data-binary @links.txt 'http://127.0.0.1:PORT/add?service=AllDebrid'   # one item per line
+      curl http://127.0.0.1:PORT/toggle      # show / hide the window
+      curl http://127.0.0.1:PORT/status      # active count and item count per service
+
+  Bookmarklet for tracker pages (replace PORT):
+
+      javascript:fetch('http://127.0.0.1:PORT/add?service=Torbox&magnet='+encodeURIComponent(location.href))
+
+  `service` is optional; without it the first configured service is used.
+- **Expiry warning.** One notification per service when premium ends within 7 days.
+- **Subtitles.** Play hands a matching `.srt` / `.ass` / `.vtt` from the same item to mpv, Celluloid, SMPlayer
+  or VLC (same file name as the video, or the item's only subtitle).
+
 ## Settings
 
 Right-click the tray icon → **Settings…**, or the gear in the toolbar.
 
 - Torbox, Real-Debrid and AllDebrid API keys, with **Test keys** to check them live.
+- Watch folder and which service it uploads to; download folder; local API port.
 - Notify when a torrent is added · Notify when a download finishes on the service (the "finished"
   notification carries an **Open files** button).
 - Watch clipboard for magnet links.
 - Remember the state filter between runs.
 - Double-click plays videos (otherwise opens Files). Off by default; the first time you double-click an item with video files the applet asks once whether to turn it on. When on, items without video files still open Files.
+- Download finished items automatically. Off by default.
 
 The first four toggles are on by default.
 
@@ -97,7 +122,7 @@ python3 test_debrid_api.py
 ```
 
 Offline tests with canned API responses, no GTK needed. `debrid_api.py` holds the three HTTP clients
-behind one interface; `debrid_applet.py` is the GTK side. Design notes live in `docs/superpowers/`.
+behind one interface; `debrid_local_api.py` is the loopback HTTP API; `debrid_applet.py` is the GTK side. Design notes live in `docs/superpowers/`.
 
 The GTK side has no unit tests; it is checked by rendering a `ServiceTab` with sample rows into a
 `Gtk.OffscreenWindow` and by driving the running applet with `xdotool` plus screenshots. Note that

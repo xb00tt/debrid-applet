@@ -505,7 +505,9 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
     debrid_applet.CONFIG = os.path.join(tmp_dir, "config.json")
     defaults = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "notify_added": True, "notify_done": True,
                 "watch_clipboard": True, "columns": {}, "window": [], "remember_filter": True, "filters": {},
-                "dblclick_play": False, "dblclick_asked": False}
+                "dblclick_play": False, "dblclick_asked": False,
+                "watch_dir": "", "watch_service": "Torbox", "auto_download": False, "download_dir": "~/Downloads",
+                "http_port": 0, "notified_expiry": {}}
     assert debrid_applet.load_config() == defaults
     debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b", "notify_done": False})
     assert debrid_applet.column_layout({}, "AllDebrid")["hidden"] == ["peers", "ratio"]
@@ -642,6 +644,57 @@ def test_aria2_command():
     cmd = debrid_applet.aria2_command(["https://cdn/a b.mkv", "https://cdn/c"], "/home/u/Downloads")
     assert cmd == "aria2c -c -x 8 -s 8 --dir=/home/u/Downloads 'https://cdn/a b.mkv' https://cdn/c"
     assert debrid_applet.aria2_command([], "/x") == ""
+
+
+def test_power_helpers():
+    import debrid_applet as da
+    from datetime import date, timedelta
+    today = date.today()
+    assert da.days_until((today + timedelta(days=3)).isoformat()) == 3
+    assert da.days_until(today.isoformat()) == 0 and da.days_until("") is None and da.days_until("junk") is None
+    links = [{"name": "Show.S01E01.mkv", "url": "https://v1"}, {"name": "Show.S01E01.srt", "url": "https://s1"},
+             {"name": "Show.S01E02.mkv", "url": "https://v2"}, {"name": "other.vtt", "url": "https://s9"}]
+    assert da.pick_subtitle("Show.S01E01.mkv", links) == "https://s1"
+    assert da.pick_subtitle("Show.S01E02.mkv", links) is None  # two candidates, none matching: skip
+    assert da.pick_subtitle("x.mkv", [{"name": "only.srt", "url": "https://s"}]) == "https://s"
+    assert da.player_cmd("mpv", "https://v", "https://s") == ["mpv", "--sub-file=https://s", "https://v"]
+    assert da.player_cmd("celluloid", "https://v", "https://s") == ["celluloid", "--mpv-sub-file=https://s", "https://v"]
+    assert da.player_cmd("vlc", "https://v", "https://s") == ["vlc", "--sub-file=https://s", "https://v"]
+    assert da.player_cmd("totem", "https://v", "https://s") == ["totem", "https://v"]
+    assert da.player_cmd("mpv", "https://v", None) == ["mpv", "https://v"]
+    assert da.download_command(["https://a", "https://b"], "/d/x", "aria2c") == ["aria2c", "-c", "-x", "8", "-s", "8", "--dir=/d/x", "https://a", "https://b"]
+    assert da.download_command(["https://a"], "/d/x", "wget") == ["wget", "-c", "-P", "/d/x", "https://a"]
+    assert da.safe_dirname("Show: S01/E01 [x]?") == "Show_ S01_E01 [x]_"
+
+
+def test_local_api():
+    import json, urllib.request
+    from debrid_local_api import LocalApi, parse_add
+    assert parse_add("service=Torbox&magnet=magnet%3A%3Fxt%3Da&link=https%3A%2F%2Fh%2Ff", "https://body/1\n\n") == \
+        ("Torbox", ["magnet:?xt=a", "https://h/f", "https://body/1"])
+    assert parse_add("", "") == ("", [])
+    calls = []
+    api = LocalApi(0, on_add=lambda s, items: calls.append(("add", s, items)) or len(items),
+                   on_toggle=lambda: calls.append(("toggle",)), status=lambda: {"Torbox": 2})
+    api.start()
+    base = f"http://127.0.0.1:{api.port}"
+    r = json.loads(urllib.request.urlopen(base + "/add?service=Torbox&magnet=magnet:?xt=urn:btih:abc").read())
+    assert r == {"ok": True, "queued": 1} and calls[-1] == ("add", "Torbox", ["magnet:?xt=urn:btih:abc"])
+    r = json.loads(urllib.request.urlopen(urllib.request.Request(base + "/add?service=AllDebrid", data=b"https://x/1\nhttps://x/2", method="POST")).read())
+    assert r["queued"] == 2 and calls[-1][2] == ["https://x/1", "https://x/2"]
+    assert json.loads(urllib.request.urlopen(base + "/toggle").read()) == {"ok": True} and calls[-1] == ("toggle",)
+    assert json.loads(urllib.request.urlopen(base + "/status").read()) == {"Torbox": 2}
+    try:
+        urllib.request.urlopen(base + "/add")
+        assert False
+    except urllib.error.HTTPError as e:
+        assert e.code == 400
+    try:
+        urllib.request.urlopen(base + "/nope")
+        assert False
+    except urllib.error.HTTPError as e:
+        assert e.code == 404
+    api.stop()
 
 
 def test_add_label():
