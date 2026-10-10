@@ -253,6 +253,8 @@ STORE_TYPES = (str, str, int, str, str, str, bool,  # 0 id, 1 name, 2 progress, 
                str, str, str)  # 20 added, 21 finished (absolute local time), 22 hash
 CHECKED, STATUS_HOLD = 6, 8
 NUMERIC = ("dl", "ul", "seeds", "peers", "ratio", "size")  # right-aligned
+WIDTHS = {"check": 28, "name": 120, "dl": 85, "ul": 85, "progress": 90, "seeds": 60, "peers": 60, "ratio": 60,
+          "state": 140, "size": 85, "added": 115, "finished": 115}  # starting widths; Name grows to fill
 PALETTE = {"active": "#3b82f6", "done": "#22c55e", "seed": "#14b8a6", "warn": "#f59e0b", "error": "#ef4444"}
 CONTROL_LAG_NOTE = ("Torbox confirms at once but applies it on its own schedule; "
                     "the State column can keep its old value for a long while.")
@@ -360,8 +362,11 @@ class ServiceTab(Gtk.Box):
                 ellipsize = Pango.EllipsizeMode.END if key == "name" else Pango.EllipsizeMode.NONE
                 col = Gtk.TreeViewColumn(title, Gtk.CellRendererText(ellipsize=ellipsize), text=idx)
                 col.set_resizable(True)
+            # Fixed starting widths so an empty list lays out like a full one; all still user-resizable.
+            col.set_sizing(Gtk.TreeViewColumnSizing.FIXED)
+            col.set_fixed_width(WIDTHS[key])
             if key == "name":
-                col.set_expand(True)
+                col.set_expand(True)  # takes whatever the others leave
             if key in NUMERIC:
                 col.get_cells()[0].set_property("xalign", 1.0)
                 col.set_alignment(1.0)
