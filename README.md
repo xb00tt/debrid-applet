@@ -5,6 +5,7 @@ One window, one tab per service: account status, every torrent with live progres
 add magnets / `.torrent` files / hoster links, stream or download the results, tidy up.
 
 Python 3 + GTK 3, no dependencies beyond a stock Mint 22 install.
+All three services are exercised against their live APIs: account, add (magnet, `.torrent`, link), list, files, play, delete.
 
 ## Install
 
