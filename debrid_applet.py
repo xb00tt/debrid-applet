@@ -440,6 +440,7 @@ class ServiceTab(Gtk.Box):
         self.apply_columns()
         self.view.set_has_tooltip(True)
         self.view.set_enable_search(False)  # the filter box does this job; typeahead would steal keys
+        self.view.set_fixed_height_mode(True)  # all columns are fixed-width, so GTK can skip per-row measuring
         self.view.connect("query-tooltip", self.on_query_tooltip)
         self.view.connect("button-press-event", self.on_row_press)
         self.view.connect("row-activated", self.on_row_activated)
