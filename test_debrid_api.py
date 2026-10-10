@@ -141,10 +141,25 @@ def test_rate_limited():
 
 def test_http_error_message():
     try:
-        RealDebrid("t", FakeSession(FakeResp(503, {"error": "down"}))).account()
+        RealDebrid("t", FakeSession(FakeResp(503, {"status": "down"}))).account()
         assert False
     except ApiError as e:
         assert str(e).startswith("HTTP 503")
+
+
+def test_http_error_uses_api_detail():
+    tb = FakeSession(FakeResp(400, {"success": False, "error": "BOZO_TORRENT", "detail": "Torrent file is not valid.", "data": None}))
+    try:
+        Torbox("t", tb).add_magnet("magnet:?x")
+        assert False
+    except ApiError as e:
+        assert str(e) == "Torrent file is not valid."
+    rd = FakeSession(FakeResp(400, {"error": "bad_request", "error_code": 1}))
+    try:
+        RealDebrid("t", rd).account()
+        assert False
+    except ApiError as e:
+        assert str(e) == "bad_request"
 
 
 def test_network_error():
@@ -156,8 +171,8 @@ def test_network_error():
 
 
 def test_tb_account():
-    s = FakeSession(ok({"plan": 2, "premium_expires_at": "2027-05-01T00:00:00Z", "total_downloaded": 3 * 1024 ** 3}))
-    assert Torbox("t", s).account() == {"plan": "Pro", "expires": "2027-05-01", "extra": "3.0 GB downloaded"}
+    s = FakeSession(ok({"plan": 2, "premium_expires_at": "2027-05-01T00:00:00Z", "total_downloaded": 191}))
+    assert Torbox("t", s).account() == {"plan": "Pro", "expires": "2027-05-01", "extra": "191 downloads"}
     assert s.calls[0][:2] == ("GET", TB + "/user/me")
 
 
@@ -204,8 +219,9 @@ def test_tb_add_torrent_file(tmp_path="/tmp/debrid-test.torrent"):
         f.write(b"d8:announce0:e")
     s = FakeSession(ok({"torrent_id": 1}))
     Torbox("t", s).add_torrent_file(tmp_path)
-    name, fileobj = s.calls[0][2]["files"]["file"]
+    name, fileobj, ctype = s.calls[0][2]["files"]["file"]
     assert name == "debrid-test.torrent"
+    assert ctype == "application/x-bittorrent"
     assert fileobj.closed
 
 

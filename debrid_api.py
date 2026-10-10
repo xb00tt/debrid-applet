@@ -41,8 +41,20 @@ class _Client:
         if r.status_code == 429:
             raise ApiError("Rate limited, retrying next tick")
         if r.status_code >= 400:
-            raise ApiError(f"HTTP {r.status_code}: {r.text[:200]}")
+            raise ApiError(_error_message(r))
         return r
+
+
+def _error_message(r):
+    """Prefer the service's own message (Torbox 'detail', Real-Debrid 'error') over raw body."""
+    try:
+        body = r.json()
+        msg = body.get("detail") or body.get("error")
+        if msg:
+            return str(msg)
+    except (ValueError, AttributeError):
+        pass
+    return f"HTTP {r.status_code}: {r.text[:200]}"
 
 
 class RealDebrid(_Client):
@@ -125,7 +137,7 @@ class Torbox(_Client):
         return {
             "plan": self.PLANS.get(u.get("plan"), str(u.get("plan"))),
             "expires": (u.get("premium_expires_at") or "")[:10],
-            "extra": f"{human_size(u.get('total_downloaded', 0))} downloaded",
+            "extra": f"{u.get('total_downloaded', 0)} downloads",
         }
 
     def torrents(self):
@@ -151,7 +163,7 @@ class Torbox(_Client):
 
     def add_torrent_file(self, path):
         with open(path, "rb") as f:
-            self._json("POST", "/torrents/createtorrent", files={"file": (os.path.basename(path), f)})
+            self._json("POST", "/torrents/createtorrent", files={"file": (os.path.basename(path), f, "application/x-bittorrent")})
 
     def delete(self, tid, kind="torrent"):
         if kind == "webdl":
