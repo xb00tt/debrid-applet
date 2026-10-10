@@ -32,7 +32,7 @@ GLib.set_prgname(APP_ID)
 CONFIG_DIR = os.path.expanduser("~/.config/debrid-applet")
 CONFIG = os.path.join(CONFIG_DIR, "config.json")
 EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "notify_added": True, "notify_done": True,
-                "watch_clipboard": True, "columns": {"order": [], "hidden": []}}
+                "watch_clipboard": True, "columns": {}}  # columns: per-service layouts, see column_layout()
 POLL_FAST, POLL_SLOW = 8, 60  # seconds between polls while something is active / when everything is idle
 INVALID_KEY = "Invalid API key"
 
@@ -244,6 +244,18 @@ treeview.view { font-feature-settings: 'tnum'; }
 """
 
 
+DEFAULT_HIDDEN = {"Real-Debrid": ["ul", "peers", "ratio"]}  # columns that service never fills
+
+
+def column_layout(columns, name):
+    """Layout dict for one service inside cfg['columns']; migrates the old shared format in place."""
+    if any(k in columns for k in ("order", "hidden", "sort")):
+        flat = {k: columns.pop(k) for k in ("order", "hidden", "sort") if k in columns}
+        for n in ("Torbox", "Real-Debrid"):
+            columns.setdefault(n, json.loads(json.dumps(flat)))
+    return columns.setdefault(name, {"order": [], "hidden": list(DEFAULT_HIDDEN.get(name, []))})
+
+
 def state_kind(state):
     """Bucket a raw service state string into a PALETTE key."""
     s = state.lower()
@@ -362,7 +374,7 @@ class ServiceTab(Gtk.Box):
 
     # ----- column layout (shared by both tabs through the config) -----
     def apply_columns(self):
-        cfg = self.app.cfg.get("columns") or {}
+        cfg = column_layout(self.app.cfg.setdefault("columns", {}), self.name)
         self._applying = True
         prev = None
         for key in cfg.get("order") or []:
@@ -384,7 +396,7 @@ class ServiceTab(Gtk.Box):
         if self._applying:
             return
         order = [k for col in self.view.get_columns() for k, c in self.cols.items() if c is col]
-        self.app.set_columns(order=order)
+        self.app.set_columns(self, order=order)
 
     def on_sort_changed(self, store):
         if self._applying:
@@ -392,7 +404,7 @@ class ServiceTab(Gtk.Box):
         idx, direction = store.get_sort_column_id()  # idx < 0 means unsorted
         key = next((k for k, _t, _i, _k, s in COLUMNS if s == idx), None)
         if key:
-            self.app.set_columns(sort=[key, "desc" if direction == Gtk.SortType.DESCENDING else "asc"])
+            self.app.set_columns(self, sort=[key, "desc" if direction == Gtk.SortType.DESCENDING else "asc"])
 
     def on_query_tooltip(self, view, x, y, keyboard, tooltip):
         """Hovering a relative date shows the full local time."""
@@ -419,7 +431,7 @@ class ServiceTab(Gtk.Box):
             if key in ("check", "name"):
                 continue
             item = Gtk.CheckMenuItem(label=title, active=self.cols[key].get_visible())
-            item.connect("toggled", lambda it, k=key: self.app.set_columns(hide=(k, not it.get_active())))
+            item.connect("toggled", lambda it, k=key: self.app.set_columns(self, hide=(k, not it.get_active())))
             menu.append(item)
         menu.show_all()
         menu.popup_at_pointer(event)
@@ -994,9 +1006,9 @@ class App:
         self.refresh()
         return False
 
-    def set_columns(self, order=None, hide=None, sort=None):
-        """Persist column order / visibility / sort and apply to both tabs."""
-        cols = self.cfg.setdefault("columns", {"order": [], "hidden": []})
+    def set_columns(self, tab, order=None, hide=None, sort=None):
+        """Persist one tab's column order / visibility / sort and re-apply it there."""
+        cols = column_layout(self.cfg.setdefault("columns", {}), tab.name)
         if order is not None:
             cols["order"] = order
         if hide is not None:
@@ -1005,8 +1017,7 @@ class App:
         if sort is not None:
             cols["sort"] = sort
         save_config(self.cfg)
-        for tab in self.tabs:
-            tab.apply_columns()
+        tab.apply_columns()
 
     def open_settings_once(self):
         key = (self.cfg["torbox_key"], self.cfg["realdebrid_key"])

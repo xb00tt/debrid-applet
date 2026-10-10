@@ -2,7 +2,6 @@
 
 Ideas from the UX review, not yet built.
 
-- Per-tab column layout, or auto-hide columns with no data (Real-Debrid has no Up / Peers / Ratio).
 - Shift-click range ticking on the checkbox column.
 - Keep the last error reachable (tooltip on the status line or a small log pane).
 - File panel with sizes and multi-select instead of the flat Links menu.

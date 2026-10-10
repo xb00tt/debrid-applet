@@ -25,7 +25,7 @@ https://real-debrid.com/apitoken → Save. Keys live in `~/.config/debrid-applet
 - **Play** streams the item's video in mpv / VLC / Celluloid (whichever is installed); double-click a row does the same. Right-click a row for Play, Links, Copy links, Copy magnet, Delete.
 - Keys: `Delete`, `Ctrl+A` tick all, `Ctrl+C` copy links, `Ctrl+F` filter, `Ctrl+R` refresh, `Esc` hide.
 - Copy a magnet link anywhere and a notification offers "Add to Torbox / Real-Debrid" (toggle in Settings).
-- Click a header to sort, drag headers to reorder, right-click a header to show/hide columns. Layout is remembered.
+- Click a header to sort, drag headers to reorder, right-click a header to show/hide columns. Layout is remembered per service.
 - Only one instance runs; launching again raises the window.
 - Polls every 8 s while something is downloading, every 60 s when idle. Desktop notification when an item finishes.
 

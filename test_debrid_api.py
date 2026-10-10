@@ -394,7 +394,7 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
     debrid_applet.CONFIG_DIR = tmp_dir
     debrid_applet.CONFIG = os.path.join(tmp_dir, "config.json")
     defaults = {"torbox_key": "", "realdebrid_key": "", "notify_added": True, "notify_done": True,
-                "watch_clipboard": True, "columns": {"order": [], "hidden": []}}
+                "watch_clipboard": True, "columns": {}}
     assert debrid_applet.load_config() == defaults
     debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b", "notify_done": False})
     assert stat.S_IMODE(os.stat(debrid_applet.CONFIG).st_mode) == 0o600
@@ -504,6 +504,20 @@ def test_drop_items():
     assert debrid_applet.drop_items(uris, "ignored") == ["/tmp/a b.torrent", "https://host/x"]
     assert debrid_applet.drop_items([], " magnet:?xt=a \n\nhttps://y\n") == ["magnet:?xt=a", "https://y"]
     assert debrid_applet.drop_items([], None) == []
+
+
+def test_column_layout_per_tab_and_migration():
+    import debrid_applet
+    cols = {"order": ["name", "check"], "hidden": ["peers"], "sort": ["added", "desc"]}  # old shared format
+    tb = debrid_applet.column_layout(cols, "Torbox")
+    assert tb == {"order": ["name", "check"], "hidden": ["peers"], "sort": ["added", "desc"]}
+    assert cols["Real-Debrid"] == tb and "order" not in cols
+    tb["hidden"].append("ul")
+    assert "ul" not in cols["Real-Debrid"]["hidden"]  # independent copies
+    fresh = {}
+    assert debrid_applet.column_layout(fresh, "Real-Debrid") == {"order": [], "hidden": ["ul", "peers", "ratio"]}
+    assert debrid_applet.column_layout(fresh, "Torbox") == {"order": [], "hidden": []}
+    assert set(fresh) == {"Torbox", "Real-Debrid"}
 
 
 def test_add_label():
