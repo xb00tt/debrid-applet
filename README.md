@@ -109,6 +109,8 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
   the service; Files, Play, Copy, Delete and friends act on the owning service. Adds from that tab go to the first
   configured service.
 - **Resume and playlists.** mpv and Celluloid resume where you stopped; a pack's Play picker has "Play all N in order".
+- **Custom play target.** Settings → "Custom play command": `{url}` is the stream, `{sub}` an optional subtitle,
+  e.g. `stremio {url}`, `kodi-send --action=PlayMedia({url})`, `mpv --fs {url} --sub-file={sub}`. Empty = the detected player.
 - **RSS watch lists.** Settings takes feeds, one per line as `url | regex | service` (regex and service optional;
   the regex is matched case-insensitively against the item title). Every N minutes (default 15) new matching items
   whose link is a magnet or a `.torrent` file are added to that service; `.torrent` URLs are fetched and uploaded.
@@ -126,7 +128,7 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 Right-click the tray icon → **Settings…**, or the gear in the toolbar.
 
 - Torbox, Real-Debrid and AllDebrid API keys, with **Test keys** to check them live.
-- Watch folder and which service it uploads to; download folder; RSS feeds and their interval; local API port and token; activity log level and size cap.
+- Custom play command; watch folder and which service it uploads to; download folder; RSS feeds and their interval; local API port and token; activity log level and size cap.
 - Notify when a torrent is added · Notify when a download finishes on the service (the "finished"
   notification carries an **Open files** button).
 - Watch clipboard for magnet links.

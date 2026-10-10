@@ -70,6 +70,7 @@ EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "no
                 "route_cached": False,  # Add box: send magnets Torbox already has to Torbox
                 "keys_in_keyring": False,  # keep API keys in the system keyring instead of config.json
                 "feeds": "", "feed_interval_min": 15, "feed_seen": [],  # RSS: "url | regex | service" lines
+                "player_command": "",  # custom Play target, e.g. "stremio {url}" or "kodi-send --action=PlayMedia({url})"
                 "config_version": 2,  # bumped when the layout changes; see migrate_config()
                 "notified_expiry": {}}  # service -> expiry date already warned about
 POLL_FAST, POLL_SLOW = 8, 60  # seconds between polls while something is active / when everything is idle
@@ -236,6 +237,22 @@ def player_cmd(player, url, sub_url=None):
     if sub_url and player in SUB_FLAG:
         cmd += SUB_FLAG[player].format(sub_url).split(" ", 1) if player == "smplayer" else [SUB_FLAG[player].format(sub_url)]
     return cmd + [url]
+
+
+def custom_cmd(template, url, sub_url=None):
+    """argv from a user template: {url} and {sub} are substituted; a word that would hold an empty {sub} is
+    dropped; a template without {url} gets the URL appended."""
+    words = shlex.split(template)
+    if not any("{url}" in w for w in words):
+        words.append("{url}")
+    out = []
+    for w in words:
+        if "{sub}" in w:
+            if not sub_url:
+                continue
+            w = w.replace("{sub}", sub_url)
+        out.append(w.replace("{url}", url))
+    return out
 
 
 def playlist_cmd(player, urls):
@@ -1040,7 +1057,7 @@ class ServiceTab(Gtk.Box):
 
     def _update_buttons(self):
         n = len(self._targets()) if self.client is not None and not self._is_busy else 0
-        self.play_btn.set_sensitive(n == 1 and bool(self.app.player))
+        self.play_btn.set_sensitive(n == 1 and bool(self.app.player or self.app.cfg.get("player_command")))
         self.links_btn.set_sensitive(n == 1)
         self.copy_btn.set_sensitive(n >= 1)
         self.del_btn.set_sensitive(n >= 1)
@@ -1378,7 +1395,7 @@ class ServiceTab(Gtk.Box):
         if not any(r[CHECKED] for r in self.store):
             view.get_selection().select_path(hit[0])
         n = len(self._targets())
-        entries = [("Play", self.on_play, n == 1 and bool(self.app.player)),
+        entries = [("Play", self.on_play, n == 1 and bool(self.app.player or self.app.cfg.get("player_command"))),
                    ("Files…", self.on_files, n == 1),
                    ("Copy links", self.on_copy_links, n >= 1),
                    ("Copy magnet", self.on_copy_magnet, n >= 1),
@@ -1489,7 +1506,7 @@ class ServiceTab(Gtk.Box):
 
     def on_play(self, _w):
         targets = self._targets()
-        if len(targets) != 1 or not self.app.player:
+        if len(targets) != 1 or not (self.app.player or self.app.cfg.get("player_command")):
             return
         t = targets[0]
 
@@ -1545,15 +1562,33 @@ class ServiceTab(Gtk.Box):
             self._files_dialog(t, links)
 
     def play_all(self, urls):
+        custom = (self.app.cfg.get("player_command") or "").strip()
+        urls = [u for u in urls if u and u.lower().startswith(("http://", "https://"))]
+        if custom:
+            for u in urls:  # one invocation per file; the target decides how to queue
+                subprocess.Popen(custom_cmd(custom, u))
+            self.say(f"Sent {len(urls)} files to: {custom.split()[0]}")
+            return
         if not self.app.player:
             self.say("No media player found (mpv, vlc, celluloid, smplayer or totem)")
             return
-        urls = [u for u in urls if u and u.lower().startswith(("http://", "https://"))]
         subprocess.Popen(playlist_cmd(self.app.player, urls))
         self.say(f"Playing {len(urls)} files in {self.app.player}")
 
     def play(self, url, name="", links=()):
-        """Hand a video URL to the player, with its subtitle file when the item has a matching one."""
+        """Hand a video URL to the player, with its subtitle file when the item has a matching one.
+        A custom command in Settings (Stremio, Kodi, Jellyfin, anything) replaces the detected player."""
+        custom = (self.app.cfg.get("player_command") or "").strip()
+        if custom:
+            if not url or not url.lower().startswith(("http://", "https://")):
+                return
+            sub_url = pick_subtitle(name, links) if links else None
+            try:
+                subprocess.Popen(custom_cmd(custom, url, sub_url))
+                self.say(f"Sent to: {custom.split()[0]}")
+            except (OSError, ValueError) as e:
+                self.say(f"Custom play command failed: {e}", error=True)
+            return
         if not self.app.player:
             self.say("No media player found (mpv, vlc, celluloid, smplayer or totem)")
             return
@@ -2038,6 +2073,7 @@ class App:
         for key, label, secret in (("torbox_key", "Torbox API key", True),
                                    ("realdebrid_key", "Real-Debrid API key", True),
                                    ("alldebrid_key", "AllDebrid API key", True),
+                                   ("player_command", "Custom play command ({url}, {sub})", False),
                                    ("watch_dir", "Watch folder for .torrent files", False),
                                    ("download_dir", "Download folder (auto-download)", False)):
             entry = Gtk.Entry(text=str(self.cfg.get(key) or ""), visibility=not secret, width_chars=48)

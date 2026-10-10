@@ -541,7 +541,7 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
                 "http_port": 0, "http_token": "", "notified_expiry": {}, "log_level": "actions", "log_max_kb": 1000,
                 "stop_seeding_when_done": False, "auto_download_videos_only": False, "delete_after_download": False,
                 "route_cached": False, "keys_in_keyring": False, "config_version": 2,
-                "feeds": "", "feed_interval_min": 15, "feed_seen": []}
+                "feeds": "", "feed_interval_min": 15, "feed_seen": [], "player_command": ""}
     assert debrid_applet.load_config() == defaults
     debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b", "notify_done": False})
     assert debrid_applet.column_layout({}, "AllDebrid")["hidden"] == ["peers", "ratio"]
@@ -698,6 +698,10 @@ def test_power_helpers():
     assert da.player_cmd("mpv", "https://v", None) == ["mpv", "--save-position-on-quit", "https://v"]
     assert da.playlist_cmd("mpv", ["https://1", "https://2"]) == ["mpv", "--save-position-on-quit", "https://1", "https://2"]
     assert da.playlist_cmd("vlc", ["https://1"]) == ["vlc", "https://1"]
+    assert da.custom_cmd("kodi-send --action='PlayMedia({url})'", "https://v", "https://s") == ["kodi-send", "--action=PlayMedia(https://v)"]
+    assert da.custom_cmd("mpv {url} --sub-file={sub}", "https://v", None) == ["mpv", "https://v"]
+    assert da.custom_cmd("mpv {url} --sub-file={sub}", "https://v", "https://s") == ["mpv", "https://v", "--sub-file=https://s"]
+    assert da.custom_cmd("stremio", "https://v", None) == ["stremio", "https://v"]
     assert da.download_command(["https://a", "https://b"], "/d/x", "aria2c") == ["aria2c", "-c", "-x", "8", "-s", "8", "--dir=/d/x", "https://a", "https://b"]
     assert da.download_command(["https://a"], "/d/x", "wget") == ["wget", "-c", "-P", "/d/x", "https://a"]
     assert da.safe_dirname("Show: S01/E01 [x]?") == "Show_ S01_E01 [x]_"
