@@ -5,8 +5,6 @@ Built so far: everything from the UX review, three services verified live, and t
 
 Remaining ideas from the power-user list, none started:
 
-- **Rules on add**: per-service defaults such as videos only, stop seeding when done (Torbox), delete from the service after the local download.
-- **Prefer-cached routing**: one add box that checks caches and sends the magnet to whichever service already has it.
 - **RSS / watch lists** with regex filters and auto-add.
 - **Stremio / Kodi / Jellyfin hand-off** for Play.
 - **CLI flags** (`--add <magnet>`, `--toggle`) via `Gio.Application` command-line handling, so a Cinnamon hotkey can drive it; the local API already covers the shell use case.

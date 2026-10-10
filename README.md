@@ -76,7 +76,11 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
   pick and moved to `done/` inside that folder. Files already there are picked up at start; a failed upload stays put.
 - **Auto-download.** With "Download finished items automatically" on, each item that finishes on a service is
   pulled into `<download folder>/<item name>/` with `aria2c` (8 connections) if installed, else `wget -c`.
-  Output goes to `download-<name>.log` next to the applet; a notification tells you when it starts.
+  Output goes to `download-<name>.log` next to the applet; notifications tell you when it starts and ends.
+  Options: videos only; delete the item from the service once the local download finished.
+- **Stop seeding when done** (Torbox): sends `stop_seeding` the moment an item finishes.
+- **Prefer cached.** A checkbox in the Add box (and the default for API calls that name no service) sends magnets
+  Torbox already has cached to Torbox and the rest to the current tab.
 - **Local API.** Set a port in Settings (0 = off); the applet listens on `127.0.0.1` only and generates a
   random token, shown in Settings. Every call must carry it as `?token=…` or an `X-Debrid-Token` header, so a
   web page cannot drive the applet behind your back. `/add` accepts `magnet:` and `http(s)://` items only.
@@ -90,7 +94,7 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 
       javascript:fetch('http://127.0.0.1:PORT/add?token=TOKEN&service=Torbox&magnet='+encodeURIComponent(location.href),{mode:'no-cors'})
 
-  `service` is optional; without it the first configured service is used.
+  `service` is optional; without it magnets cached on Torbox go to Torbox and the rest to the first configured service.
 - **Expiry warning.** One notification per service when premium ends within 7 days.
 - **Activity log.** Clock icon in the toolbar (or `Ctrl+L`): status messages and notifications with a timestamp,
   newest last, with Refresh / Open file / Clear. Kept in `~/.local/share/debrid-applet/activity.log`. Settings choose
@@ -109,7 +113,7 @@ Right-click the tray icon → **Settings…**, or the gear in the toolbar.
 - Watch clipboard for magnet links.
 - Remember the state filter between runs.
 - Double-click plays videos (otherwise opens Files). Off by default; the first time you double-click an item with video files the applet asks once whether to turn it on. When on, items without video files still open Files.
-- Download finished items automatically. Off by default.
+- Download finished items automatically, videos only, delete after download; Torbox stop seeding when done. All off by default.
 
 The first four toggles are on by default.
 

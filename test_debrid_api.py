@@ -538,7 +538,9 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
                 "watch_clipboard": True, "columns": {}, "window": [], "remember_filter": True, "filters": {},
                 "dblclick_play": False, "dblclick_asked": False,
                 "watch_dir": "", "watch_service": "Torbox", "auto_download": False, "download_dir": "~/Downloads",
-                "http_port": 0, "http_token": "", "notified_expiry": {}, "log_level": "actions", "log_max_kb": 1000}
+                "http_port": 0, "http_token": "", "notified_expiry": {}, "log_level": "actions", "log_max_kb": 1000,
+                "stop_seeding_when_done": False, "auto_download_videos_only": False, "delete_after_download": False,
+                "route_cached": False}
     assert debrid_applet.load_config() == defaults
     debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b", "notify_done": False})
     assert debrid_applet.column_layout({}, "AllDebrid")["hidden"] == ["peers", "ratio"]
@@ -781,6 +783,19 @@ def test_footer_helpers():
     assert da.totals_text(rows, shown=2, ticked=0) == "⬇ 1000 B/s · ⬆ 200 B/s · 1 active · 2 items · 30 B"
     assert da.totals_text(rows, shown=1, ticked=1) == "⬇ 1000 B/s · ⬆ 200 B/s · 1 active · 2 items · 30 B · showing 1 · 1 ticked"
     assert da.totals_text([], shown=0, ticked=0) == "0 items"
+
+
+def test_route_items():
+    import debrid_applet as da
+
+    class Checker:
+        def check_cached(self, hashes):
+            return {h for h in hashes if h.startswith("a")}
+    a, b = "a" * 40, "b" * 40
+    items = [f"magnet:?xt=urn:btih:{a}", f"magnet:?xt=urn:btih:{b}", "https://host/file", "magnet:?dn=nohash"]
+    routed = da.route_items(items, Checker())
+    assert routed == {True: [f"magnet:?xt=urn:btih:{a}"], False: [f"magnet:?xt=urn:btih:{b}", "https://host/file", "magnet:?dn=nohash"]}
+    assert da.route_items(items, None) == {True: [], False: items}
 
 
 def test_add_label():

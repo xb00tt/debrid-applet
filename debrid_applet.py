@@ -55,6 +55,9 @@ EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "no
                 "auto_download": False, "download_dir": "~/Downloads",  # finished items -> aria2c/wget into here
                 "http_port": 0, "http_token": "",  # loopback API port (0 = off) and its required token
                 "log_level": "actions", "log_max_kb": 1000,  # activity log verbosity and size cap
+                "stop_seeding_when_done": False,  # Torbox: send stop_seeding as soon as an item finishes
+                "auto_download_videos_only": False, "delete_after_download": False,  # auto-download rules
+                "route_cached": False,  # Add box: send magnets Torbox already has to Torbox
                 "notified_expiry": {}}  # service -> expiry date already warned about
 POLL_FAST, POLL_SLOW = 8, 60  # seconds between polls while something is active / when everything is idle
 INVALID_KEY = "Invalid API key"
@@ -204,6 +207,19 @@ def totals_text(torrents, shown, ticked):
     if ticked:
         parts.append(f"{ticked} ticked")
     return " · ".join(parts)
+
+
+def route_items(items, checker):
+    """Split items into {True: cached on the checker's service, False: the rest}. checker needs check_cached()."""
+    hashes = {i: magnet_hash(i) for i in items if i.lower().startswith("magnet:")}
+    cached = set()
+    if checker is not None and any(hashes.values()):
+        try:
+            cached = checker.check_cached([h for h in hashes.values() if h])
+        except ApiError:
+            cached = set()
+    return {True: [i for i in items if hashes.get(i) and hashes[i] in cached],
+            False: [i for i in items if not (hashes.get(i) and hashes[i] in cached)]}
 
 
 def merge_active(full, active):
@@ -824,6 +840,9 @@ class ServiceTab(Gtk.Box):
                                [("Open files", lambda t=t: self.app.show_files(self, t))])
                     if self.app.cfg.get("auto_download"):
                         self.auto_download(t)
+                    if self.app.cfg.get("stop_seeding_when_done") and t["kind"] == "torrent" and hasattr(self.client, "control"):
+                        run_async(lambda t=t: self.client.control(t["id"], "stop_seeding", t["kind"]),
+                                  lambda r, e, t=t: self.say(f"Stop seeding {t['name'][:40]}: {e or r}", error=bool(e)))
 
     def auto_download(self, t):
         """Fetch the finished item's links and start a resumable bulk download into its own folder."""
@@ -833,15 +852,28 @@ class ServiceTab(Gtk.Box):
         def start(links, err):
             if err:
                 return
-            urls = [l["url"] for l in links if l["url"] and not l["name"].startswith("All files")]
+            usable = [l for l in links if l["url"] and not l["name"].startswith("All files")]
+            if self.app.cfg.get("auto_download_videos_only"):
+                usable = [l for l in usable if l["name"].lower().endswith(VIDEO_EXT)] or usable
+            urls = [l["url"] for l in usable]
             if not urls:
                 self.say(f"Auto-download: no links for {t['name'][:40]}", error=True)
                 return
             os.makedirs(dest, exist_ok=True)
             log = open(os.path.join(HERE, f"download-{safe_dirname(t['name'])[:40]}.log"), "ab")
-            subprocess.Popen(download_command(urls, dest, tool), stdout=log, stderr=log)
+            proc = subprocess.Popen(download_command(urls, dest, tool), stdout=log, stderr=log)
             self.say(f"Auto-download: {len(urls)} file(s) via {tool} into {dest}")
             notify(f"{self.name}: downloading {len(urls)} file(s)", dest)
+
+            def finished(code):
+                if code == 0:
+                    notify(f"{self.name}: download finished", dest)
+                    if self.app.cfg.get("delete_after_download"):
+                        run_async(lambda: self.client.delete(t["id"], t["kind"]),
+                                  lambda _r, e: (self.say(f"Deleted after download: {t['name'][:40]}" if not e else f"Delete after download failed: {e}", error=bool(e)), self.app.refresh()))
+                else:
+                    self.say(f"Download of {t['name'][:40]} exited with code {code}, see the log next to the applet", error=True)
+            threading.Thread(target=lambda: GLib.idle_add(finished, proc.wait()), daemon=True).start()
         self._run(lambda: self.client.links(t["id"], t["kind"]), start)
 
     def on_state_filter(self, combo):
@@ -911,6 +943,10 @@ class ServiceTab(Gtk.Box):
         box.set_property("margin", 12)
         hint = Gtk.Label(xalign=0, label="One per line:  magnet:?xt=urn:btih:…   https://…   http://…")
         hint.get_style_context().add_class("dim-label")
+        torbox = self.app.tab_named("Torbox")
+        route = Gtk.CheckButton(label="Send magnets Torbox already has cached to Torbox instead",
+                                active=bool(self.app.cfg.get("route_cached")))
+        route.set_sensitive(bool(torbox and torbox.client) and torbox is not self)
         view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, left_margin=8, right_margin=8,
                             top_margin=6, bottom_margin=6)
         buf = view.get_buffer()
@@ -920,15 +956,26 @@ class ServiceTab(Gtk.Box):
         box.pack_start(hint, False, False, 0)
         box.pack_start(scroller, True, True, 0)
         box.pack_start(result, False, False, 0)
+        if route.get_sensitive():
+            box.pack_start(route, False, False, 0)
         if hasattr(self.client, "check_cached"):
             self._live_cache_check(buf, result)
         dlg.show_all()
         view.grab_focus()
         ok = dlg.run() == Gtk.ResponseType.OK
         text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+        use_route = route.get_sensitive() and route.get_active()
         dlg.destroy()
-        if ok:
-            self.add_items([line.strip() for line in text.splitlines() if line.strip()])
+        if not ok:
+            return
+        items = [line.strip() for line in text.splitlines() if line.strip()]
+        if route.get_sensitive() and self.app.cfg.get("route_cached") != use_route:
+            self.app.cfg["route_cached"] = use_route
+            save_config(self.app.cfg)
+        if use_route:
+            self.app.add_routed(items, self)
+        else:
+            self.add_items(items)
 
     def _live_cache_check(self, buf, result):
         """While the Add box is open: 500 ms after the last edit, ask the service which magnets are cached."""
@@ -1401,6 +1448,22 @@ class App:
         LOG_SETTINGS["level"] = self.cfg.get("log_level") or "actions"
         LOG_SETTINGS["max"] = max(50, int(self.cfg.get("log_max_kb") or 1000)) * 1000
 
+    def add_routed(self, items, default_tab):
+        """Magnets Torbox already has go to Torbox; everything else to default_tab. Runs the cache check off-thread."""
+        torbox = self.tab_named("Torbox")
+        checker = torbox.client if torbox and torbox.client and torbox is not default_tab else None
+
+        def done(routed, err):
+            if err:
+                default_tab.say(f"Cache check failed, adding here: {err}", error=True)
+                routed = {True: [], False: items}
+            if routed[True]:
+                torbox.say(f"{len(routed[True])} cached magnet(s) routed here")
+                torbox.add_items(routed[True])
+            if routed[False]:
+                default_tab.add_items(routed[False])
+        run_async(lambda: route_items(items, checker), done)
+
     def tab_named(self, name):
         return next((t for t in self.tabs if t.name == name), None)
 
@@ -1420,7 +1483,10 @@ class App:
             if tab is None or tab.client is None:
                 return 0
             log_event(tab.name, f"Local API: {len(items)} item(s) queued")
-            GLib.idle_add(tab.add_items, list(items))
+            if service:
+                GLib.idle_add(tab.add_items, list(items))
+            else:  # no service named: cached-on-Torbox routing, else the first configured tab
+                GLib.idle_add(self.add_routed, list(items), tab)
             return len(items)
 
         def status():
@@ -1656,7 +1722,10 @@ class App:
                            ("watch_clipboard", "Watch clipboard for magnet links"),
                            ("remember_filter", "Remember the state filter between runs"),
                            ("dblclick_play", "Double-click plays videos (otherwise opens Files)"),
-                           ("auto_download", "Download finished items automatically (aria2c, else wget)")):
+                           ("auto_download", "Download finished items automatically (aria2c, else wget)"),
+                           ("auto_download_videos_only", "    …video files only"),
+                           ("delete_after_download", "    …then delete the item from the service"),
+                           ("stop_seeding_when_done", "Torbox: stop seeding as soon as an item finishes")):
             check = Gtk.CheckButton(label=label, active=bool(self.cfg.get(key)))
             grid.attach(check, 0, row, 2, 1)
             checks[key] = check
