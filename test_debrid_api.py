@@ -541,7 +541,7 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
                 "http_port": 0, "http_token": "", "notified_expiry": {}, "log_level": "actions", "log_max_kb": 1000,
                 "stop_seeding_when_done": False, "auto_download_videos_only": False, "delete_after_download": False,
                 "route_cached": False, "keys_in_keyring": False, "config_version": 2,
-                "feeds": "", "feed_interval_min": 15, "feed_seen": [], "player_command": ""}
+                "feeds": "", "feed_interval_min": 15, "feed_seen": [], "player_command": "", "start_tab": "All"}
     assert debrid_applet.load_config() == defaults
     debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b", "notify_done": False})
     assert debrid_applet.column_layout({}, "AllDebrid")["hidden"] == ["peers", "ratio"]
@@ -840,7 +840,8 @@ def test_merged_client():
     rd = Tab("Real-Debrid", [{"id": "A", "name": "y", "done": True, "hash": "", "kind": "torrent"}])
     m = da.MergedClient(lambda: [tb, rd])
     rows = m.torrents()
-    assert [r["id"] for r in rows] == ["Torbox|7", "Real-Debrid|A"] and rows[0]["name"] == "Torbox: x"
+    assert [r["id"] for r in rows] == ["Torbox|7", "Real-Debrid|A"] and rows[0]["name"] == "x"
+    assert [r["service"] for r in rows] == ["Torbox", "Real-Debrid"]
     assert [r["id"] for r in m.torrents(active_only=True)] == ["Torbox|7"]
     m.delete("Real-Debrid|A", "torrent"); assert rd.calls == [("delete", "A", "torrent")]
     assert m.links("Torbox|7", "torrent") == [{"name": "Torbox-7", "url": "u", "size": 1}]

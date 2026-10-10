@@ -45,6 +45,7 @@ SUB_EXT = (".srt", ".ass", ".vtt", ".sub")
 SERVICES = ("Torbox", "Real-Debrid", "AllDebrid")
 DASHBOARDS = {"Torbox": "https://torbox.app/dashboard", "Real-Debrid": "https://real-debrid.com/torrents",
               "AllDebrid": "https://alldebrid.com/magnets"}
+SERVICE_COLORS = {"Torbox": "#e8761b", "Real-Debrid": "#3b82f6", "AllDebrid": "#a855f7"}  # Service column on the All tab
 EXPIRY_WARN_DAYS = 7
 VIDEO_EXT = (".mkv", ".mp4", ".avi", ".m4v", ".webm", ".mov", ".ts", ".wmv", ".flv")
 GLib.set_prgname(APP_ID)
@@ -71,6 +72,7 @@ EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "no
                 "keys_in_keyring": False,  # keep API keys in the system keyring instead of config.json
                 "feeds": "", "feed_interval_min": 15, "feed_seen": [],  # RSS: "url | regex | service" lines
                 "player_command": "",  # custom Play target, e.g. "stremio {url}" or "kodi-send --action=PlayMedia({url})"
+                "start_tab": "All",  # tab shown when the window opens
                 "config_version": 2,  # bumped when the layout changes; see migrate_config()
                 "notified_expiry": {}}  # service -> expiry date already warned about
 POLL_FAST, POLL_SLOW = 8, 60  # seconds between polls while something is active / when everything is idle
@@ -292,7 +294,7 @@ class MergedClient:
             for t in tab.torrents:
                 if active_only and t["done"]:
                     continue
-                out.append({**t, "id": f"{tab.name}|{t['id']}", "name": f"{tab.name}: {t['name']}"})
+                out.append({**t, "id": f"{tab.name}|{t['id']}", "service": tab.name})
         return out
 
     def delete(self, tid, kind="torrent"):
@@ -687,6 +689,7 @@ def red(text):
 # key, title, display column, kind, sort column (raw numbers live in hidden store columns)
 COLUMNS = (
     ("check", "", 6, "toggle", None),
+    ("service", "Service", 23, "text", 23),
     ("name", "Name", 1, "text", 1),
     ("dl", "Down", 7, "text", 15),
     ("ul", "Up", 8, "text", 16),
@@ -703,10 +706,10 @@ ABSOLUTE = {"added": 20, "finished": 21}  # store columns holding the full local
 STORE_TYPES = (str, str, int, str, str, str, bool,  # 0 id, 1 name, 2 progress, 3 state, 4 size, 5 kind, 6 checked
                str, str, str, str, str, str, str,   # 7 dl, 8 ul, 9 seeds, 10 peers, 11 ratio, 12 added, 13 finished
                float, float, float, int, int, float,  # 14 size, 15 dl, 16 ul, 17 seeds, 18 peers, 19 ratio (raw)
-               str, str, str)  # 20 added, 21 finished (absolute local time), 22 hash
+               str, str, str, str)  # 20 added, 21 finished (absolute local time), 22 hash, 23 service
 CHECKED, STATUS_HOLD = 6, 8
 NUMERIC = ("dl", "ul", "seeds", "peers", "ratio", "size")  # right-aligned
-WIDTHS = {"check": 28, "name": 120, "dl": 85, "ul": 85, "progress": 90, "seeds": 60, "peers": 60, "ratio": 60,
+WIDTHS = {"check": 28, "service": 95, "name": 120, "dl": 85, "ul": 85, "progress": 90, "seeds": 60, "peers": 60, "ratio": 60,
           "state": 140, "size": 85, "added": 115, "finished": 115}  # starting widths; Name grows to fill
 PALETTE = {"active": "#3b82f6", "done": "#22c55e", "seed": "#14b8a6", "warn": "#f59e0b", "error": "#ef4444"}
 CONTROL_LAG_NOTE = ("Torbox confirms at once but applies it on its own schedule; "
@@ -935,7 +938,7 @@ class ServiceTab(Gtk.Box):
                 prev = col
         hidden = set(cfg.get("hidden") or [])
         for key, col in self.cols.items():
-            col.set_visible(key not in hidden)
+            col.set_visible(self.is_merged if key == "service" else key not in hidden)
         for key, width in (cfg.get("widths") or {}).items():
             if key in self.cols and key != "name" and int(width) > 0:
                 self.cols[key].set_fixed_width(int(width))
@@ -996,7 +999,7 @@ class ServiceTab(Gtk.Box):
             return False
         menu = Gtk.Menu()
         for key, title, _i, _k, _s in COLUMNS:
-            if key in ("check", "name"):
+            if key in ("check", "name", "service"):
                 continue
             item = Gtk.CheckMenuItem(label=title, active=self.cols[key].get_visible())
             item.connect("toggled", lambda it, k=key: self.app.set_columns(self, hide=(k, not it.get_active())))
@@ -1015,7 +1018,10 @@ class ServiceTab(Gtk.Box):
         idx = model.get_path(it).get_indices()[0]
         cell.set_property("cell-background-rgba", Gdk.RGBA(fg.red, fg.green, fg.blue, 0.035 if idx % 2 else 0))
         kind = state_kind(model[it][3])
-        if key == "state":
+        if key == "service":
+            cell.set_property("foreground", SERVICE_COLORS.get(model[it][23], PALETTE["done"]))
+            cell.set_property("weight", Pango.Weight.BOLD)
+        elif key == "state":
             cell.set_property("foreground", PALETTE[kind])
         elif key == "name":
             cell.set_property("foreground-rgba", fg)
@@ -1195,7 +1201,7 @@ class ServiceTab(Gtk.Box):
             float(t["size"]), float(t["speed"] or 0), float(t["up_speed"] or -1),
             int(t["seeds"]), -1 if t["peers"] is None else int(t["peers"]),
             -1.0 if t["ratio"] is None else float(t["ratio"]),
-            local_time(t["added"]), local_time(t["finished"]), t["hash"],
+            local_time(t["added"]), local_time(t["finished"]), t["hash"], t.get("service", self.name),
         ]
 
     def _fill(self):
@@ -1848,10 +1854,12 @@ class App:
             ServiceTab("AllDebrid", AllDebrid(self.cfg["alldebrid_key"]) if self.cfg["alldebrid_key"] else None, self),
         ]
         if sum(1 for t in self.tabs if t.client) > 1:
-            self.tabs.append(ServiceTab("All", MergedClient(lambda: self.tabs), self))
+            self.tabs.insert(0, ServiceTab("All", MergedClient(lambda: self.tabs), self))
         for tab in self.tabs:
             self.notebook.append_page(tab, Gtk.Label(label=tab.name))
         self.notebook.show_all()
+        wanted = self.cfg.get("start_tab") or "All"
+        self.notebook.set_current_page(next((i for i, t in enumerate(self.tabs) if t.name == wanted), 0))
 
     def current_tab(self):
         return self.tabs[self.notebook.get_current_page()]
@@ -2208,6 +2216,7 @@ class SettingsForm:
         self._check(g, "notify_added", "When a torrent is added")
         self._check(g, "notify_done", "When a download finishes on the service")
         self._heading(g, "Convenience")
+        self._combo(g, "start_tab", "Tab on start-up", [("All", "All")] + [(s, s) for s in SERVICES])
         self._check(g, "watch_clipboard", "Watch the clipboard for magnet links")
         self._check(g, "remember_filter", "Remember the state filter between runs")
         self._heading(g, "Playback")

@@ -129,9 +129,9 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 
 ### Visibility
 
-- **All tab.** With more than one service configured, a fourth tab lists everything together, names prefixed with
-  the service; Files, Play, Copy, Delete and friends act on the owning service. Adds from that tab go to the first
-  configured service.
+- **All tab.** With more than one service configured, the first tab lists everything together with a colored
+  **Service** column; Files, Play, Copy, Delete and friends act on the owning service. Adds from that tab go to the
+  first configured service. Settings → Behaviour picks which tab the window opens on (All by default).
 - **Expiry warning.** One notification per service when premium ends within 7 days.
 - **Activity log.** Clock icon in the toolbar (or `Ctrl+L`): status messages and notifications with a timestamp,
   newest last, with Refresh / Open file / Clear. Kept in `~/.local/share/debrid-applet/activity.log`. Settings choose
@@ -142,8 +142,8 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 Right-click the tray icon → **Settings…**, or the gear in the toolbar. Four pages:
 
 - **Accounts**: the three API keys with **Test keys**, and whether to keep them in the system keyring.
-- **Behaviour**: notifications (added, finished), clipboard watcher, remembered state filter, double-click
-  plays videos, custom play command.
+- **Behaviour**: notifications (added, finished), tab on start-up, clipboard watcher, remembered state filter,
+  double-click plays videos, custom play command.
 - **Automation**: watch folder and its target service; RSS feeds and their interval; what happens when an item
   finishes (auto-download, videos only, delete afterwards, download folder; Torbox stop seeding).
 - **Advanced**: local API port and token; activity log level and size cap.
