@@ -32,7 +32,7 @@ GLib.set_prgname(APP_ID)
 CONFIG_DIR = os.path.expanduser("~/.config/debrid-applet")
 CONFIG = os.path.join(CONFIG_DIR, "config.json")
 EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "notify_added": True, "notify_done": True,
-                "watch_clipboard": True, "columns": {}}  # columns: per-service layouts, see column_layout()
+                "watch_clipboard": True, "columns": {}, "window": []}  # columns: per-service, see column_layout()
 POLL_FAST, POLL_SLOW = 8, 60  # seconds between polls while something is active / when everything is idle
 INVALID_KEY = "Invalid API key"
 
@@ -281,6 +281,8 @@ class ServiceTab(Gtk.Box):
         self.torrents = []  # last poll, re-filtered on every keystroke
         self._pending = []  # (expiry, placeholder row) for items just added, until the service lists them
         self._known = set()
+        self._anchor = None  # row index of the last checkbox click, for shift-click ranges
+        self.errors = []  # (time, message) of the last few failures, shown as the status line's tooltip
         self.active = 0
         self._is_busy = False
         self._applying = True  # suppress columns-changed while we build or restore the layout
@@ -460,7 +462,20 @@ class ServiceTab(Gtk.Box):
         row = self.store[path]
         row[CHECKED] = not row[CHECKED]
         (self.checked.add if row[CHECKED] else self.checked.discard)(row[0])
+        self._anchor = Gtk.TreePath.new_from_string(path).get_indices()[0]
         self._sync_checks()
+
+    def _tick_range(self, index):
+        """Shift-click on a checkbox: give every row between the last click and this one the anchor's state."""
+        if self._anchor is None or self._anchor >= len(self.store):
+            return False
+        turn_on = self.store[self._anchor][CHECKED]
+        lo, hi = sorted((self._anchor, index))
+        for row in list(self.store)[lo:hi + 1]:
+            row[CHECKED] = turn_on
+            (self.checked.add if turn_on else self.checked.discard)(row[0])
+        self._sync_checks()
+        return True
 
     def on_toggle_all(self, _col):
         turn_on = not all(r[CHECKED] for r in self.store)
@@ -501,9 +516,12 @@ class ServiceTab(Gtk.Box):
         self._update_buttons()
 
     def say(self, msg, error=False):
-        """Status line message that polls leave alone for a few seconds."""
+        """Status line message that polls leave alone for a few seconds. Errors stay in the tooltip."""
         self.status.set_markup(red(msg) if error else GLib.markup_escape_text(msg))
         self._hold_until = time.monotonic() + STATUS_HOLD
+        if error and (not self.errors or self.errors[-1][1] != msg):
+            self.errors = (self.errors + [(time.strftime("%H:%M:%S"), msg)])[-8:]
+            self.status.set_tooltip_text("Recent errors:\n" + "\n".join(f"{t}  {m}" for t, m in self.errors))
 
     def _run(self, fn, cb):
         """Run a network action; show errors in the status label; then cb(result, error)."""
@@ -553,6 +571,7 @@ class ServiceTab(Gtk.Box):
         kind = self.state_filter.get_active_id() or "all"
         selected = self._selected()
         self.store.clear()
+        self._anchor = None
         now = time.monotonic()
         self._pending = [(exp, row) for exp, row in self._pending if now < exp]
         for t in [row for _exp, row in self._pending] + self.torrents:  # placeholders first
@@ -711,11 +730,13 @@ class ServiceTab(Gtk.Box):
         self._run(work, done)
 
     def on_row_press(self, view, event):
-        """Right-click: select the row under the pointer (unless rows are ticked) and show the context menu."""
-        if event.button != 3:
-            return False
+        """Shift-click on a checkbox ticks a range; right-click shows the context menu."""
         hit = view.get_path_at_pos(int(event.x), int(event.y))
         if not hit:
+            return False
+        if event.button == 1 and event.state & Gdk.ModifierType.SHIFT_MASK and hit[1] is self.cols["check"]:
+            return self._tick_range(hit[0].get_indices()[0])
+        if event.button != 3:
             return False
         if not any(r[CHECKED] for r in self.store):
             view.get_selection().select_path(hit[0])
@@ -791,10 +812,6 @@ class ServiceTab(Gtk.Box):
                 item = Gtk.MenuItem(label=link["name"][:80], sensitive=link["url"] is not None)
                 item.connect("activate", lambda _i, url=link["url"]: open_url(url))
                 menu.append(item)
-            menu.append(Gtk.SeparatorMenuItem())
-            copy_all = Gtk.MenuItem(label="Copy all links")
-            copy_all.connect("activate", lambda _i: copy_text("\n".join(l["url"] for l in links if l["url"])))
-            menu.append(copy_all)
             menu.show_all()
             if btn is not None:
                 menu.popup_at_widget(btn, Gdk.Gravity.SOUTH_WEST, Gdk.Gravity.NORTH_WEST, None)
@@ -882,17 +899,18 @@ class App:
         self.icon.set_tooltip_text("Debrid")
         self.icon.connect("activate", self.toggle_window)
         menu = Gtk.Menu()
-        for label, cb in (("Open", self.toggle_window), ("Refresh", self.refresh),
-                          ("Settings…", self.open_settings), ("Quit", lambda *_: self.gapp.quit())):
+        for label, cb in (("Refresh", self.refresh), ("Settings…", self.open_settings),
+                          ("Quit", lambda *_: self.gapp.quit())):
             item = Gtk.MenuItem(label=label)
             item.connect("activate", cb)
             menu.append(item)
         menu.show_all()
         self.icon.set_secondary_menu(menu)
 
-        self.window = Gtk.Window(title="Debrid", default_width=1100, default_height=560)
+        w, h = (self.cfg.get("window") or [1100, 560])[:2]
+        self.window = Gtk.Window(title="Debrid", default_width=w, default_height=h)
         self.gapp.add_window(self.window)
-        self.window.connect("delete-event", lambda w, _e: w.hide() or True)
+        self.window.connect("delete-event", lambda w, _e: self.hide_window() or True)
         self.window.connect("key-press-event", self.on_key)
         self.clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
         self.clipboard.connect("owner-change", lambda clip, _e: self.cfg.get("watch_clipboard") and clip.request_text(self.on_clipboard_text))
@@ -926,7 +944,7 @@ class App:
         ctrl = bool(event.state & Gdk.ModifierType.CONTROL_MASK)
         key = Gdk.keyval_to_lower(event.keyval)
         if key == Gdk.KEY_Escape:
-            self.window.hide()
+            self.hide_window()
         elif ctrl and key == Gdk.KEY_f:
             tab.search.grab_focus()
         elif ctrl and key == Gdk.KEY_r:
@@ -956,9 +974,14 @@ class App:
         note.show()
         self._clip_note = note  # keep it alive for the action callbacks
 
+    def hide_window(self):
+        self.cfg["window"] = list(self.window.get_size())
+        save_config(self.cfg)
+        self.window.hide()
+
     def toggle_window(self, *_):
         if self.window.is_visible():
-            self.window.hide()
+            self.hide_window()
         else:
             self.window.show_all()
             self.window.present()

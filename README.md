@@ -23,6 +23,7 @@ https://real-debrid.com/apitoken → Save. Keys live in `~/.config/debrid-applet
 - Folder icon picks one or more `.torrent` files. Dropping `.torrent` files, links or magnets onto a tab adds them too. Refresh and settings icons sit next to it.
 - Tick rows (or just highlight one): **Links ▾** lists files of one item (click opens in browser), **Copy links** copies every direct URL of the ticked items, **Delete** removes them (asks when more than one).
 - **Play** streams the item's video in mpv / VLC / Celluloid (whichever is installed); double-click a row does the same. Right-click a row for Play, Links, Copy links, Copy magnet, Delete.
+- Shift-click a checkbox to tick a range. Hover the status line for recent errors.
 - Keys: `Delete`, `Ctrl+A` tick all, `Ctrl+C` copy links, `Ctrl+F` filter, `Ctrl+R` refresh, `Esc` hide.
 - Copy a magnet link anywhere and a notification offers "Add to Torbox / Real-Debrid" (toggle in Settings).
 - Click a header to sort, drag headers to reorder, right-click a header to show/hide columns. Layout is remembered per service.
