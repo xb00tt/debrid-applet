@@ -451,6 +451,7 @@ def test_relative_time():
     assert rel(minutes=59) == "59 minutes ago"
     assert rel(hours=1) == "1 hour ago"
     assert rel(hours=12) == "12 hours ago"
+    assert rel(hours=23, minutes=50) == "yesterday"
     assert rel(hours=30) == "yesterday"
     assert rel(days=3) == "3 days ago"
     assert rel(days=9) == "1 week ago"

@@ -148,10 +148,13 @@ def relative_time(iso, now=None):
         return "just now"
     if s < 3600:
         return _plural(max(1, round(s / 60)), "minute")
-    if s < 86400:
-        return _plural(max(1, round(s / 3600)), "hour")
+    hours = max(1, round(s / 3600))
+    if hours < 24:
+        return _plural(hours, "hour")
     days = (now.astimezone().date() - dt.astimezone().date()).days
-    if days <= 1:
+    if days <= 0:
+        return "today"
+    if days == 1:
         return "yesterday"
     if days < 7:
         return _plural(days, "day")
@@ -339,9 +342,9 @@ class ServiceTab(Gtk.Box):
     def on_sort_changed(self, store):
         if self._applying:
             return
-        ok, idx, direction = store.get_sort_column_id()
+        idx, direction = store.get_sort_column_id()  # idx < 0 means unsorted
         key = next((k for k, _t, _i, _k, s in COLUMNS if s == idx), None)
-        if ok and key:
+        if key:
             self.app.set_columns(sort=[key, "desc" if direction == Gtk.SortType.DESCENDING else "asc"])
 
     def on_query_tooltip(self, view, x, y, keyboard, tooltip):
