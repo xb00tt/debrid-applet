@@ -27,7 +27,7 @@ https://real-debrid.com/apitoken → Save. Keys live in `~/.config/debrid-applet
 - Copy a magnet link anywhere and a notification offers "Add to Torbox / Real-Debrid" (toggle in Settings).
 - Click a header to sort, drag headers to reorder, right-click a header to show/hide columns. Layout is remembered.
 - Only one instance runs; launching again raises the window.
-- Polls every 30 s. Desktop notification when an item finishes.
+- Polls every 8 s while something is downloading, every 60 s when idle. Desktop notification when an item finishes.
 
 ## Dev
 

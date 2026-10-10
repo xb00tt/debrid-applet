@@ -33,7 +33,7 @@ CONFIG_DIR = os.path.expanduser("~/.config/debrid-applet")
 CONFIG = os.path.join(CONFIG_DIR, "config.json")
 EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "notify_added": True, "notify_done": True,
                 "watch_clipboard": True, "columns": {"order": [], "hidden": []}}
-POLL_SECONDS = 30
+POLL_FAST, POLL_SLOW = 8, 60  # seconds between polls while something is active / when everything is idle
 INVALID_KEY = "Invalid API key"
 
 
@@ -859,6 +859,7 @@ class App:
         self.cfg = load_config()
         self.lock = threading.Lock()
         self._refresh_again = False
+        self._timer = 0
         self._settings_shown_for = None
         self.tabs = []
 
@@ -891,8 +892,7 @@ class App:
 
         if not (self.cfg["torbox_key"] or self.cfg["realdebrid_key"]):
             self.open_settings()
-        self.refresh()
-        GLib.timeout_add_seconds(POLL_SECONDS, self.refresh)
+        self.refresh()  # every poll schedules the next one (see _schedule)
 
     def build_tabs(self):
         for page in list(self.notebook.get_children()):
@@ -976,10 +976,23 @@ class App:
                 t.render(acc, tors, e)
             active = sum(t.active for t in self.tabs)
             self.icon.set_label(f"{active}↓" if active else "")
+            self._schedule(POLL_FAST if active or any(t._pending for t in self.tabs) else POLL_SLOW)
             if self._refresh_again:
                 self.refresh()
         run_async(fetch, done)
         return True
+
+    def _schedule(self, seconds):
+        """Adaptive polling: fast while downloads run, slow when idle. Replaces any pending timer."""
+        if self._timer:
+            GLib.source_remove(self._timer)
+        self._timer = GLib.timeout_add_seconds(seconds, self._tick)
+        self.icon.set_tooltip_text(f"Debrid · polling every {seconds} s")
+
+    def _tick(self):
+        self._timer = 0
+        self.refresh()
+        return False
 
     def set_columns(self, order=None, hide=None, sort=None):
         """Persist column order / visibility / sort and apply to both tabs."""
