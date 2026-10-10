@@ -253,6 +253,8 @@ STORE_TYPES = (str, str, int, str, str, str, bool,  # 0 id, 1 name, 2 progress, 
 CHECKED, STATUS_HOLD = 6, 8
 NUMERIC = ("dl", "ul", "seeds", "peers", "ratio", "size")  # right-aligned
 PALETTE = {"active": "#3b82f6", "done": "#22c55e", "seed": "#14b8a6", "warn": "#f59e0b", "error": "#ef4444"}
+CONTROL_LAG_NOTE = ("Torbox confirms at once but applies it on its own schedule; "
+                    "the State column can keep its old value for a long while.")
 STATE_FILTERS = (("all", "All states"), ("active", "Active"), ("done", "Done"), ("seed", "Seeding"),
                  ("warn", "Stalled"), ("error", "Error"))
 CSS = b"""
@@ -779,6 +781,8 @@ class ServiceTab(Gtk.Box):
                 menu.append(Gtk.SeparatorMenuItem())
                 continue
             item = Gtk.MenuItem(label=label, sensitive=ok)
+            if label in ("Resume", "Stop seeding", "Reannounce"):
+                item.set_tooltip_text(CONTROL_LAG_NOTE)
             item.connect("activate", lambda _i, cb=cb: cb(None))
             menu.append(item)
         menu.show_all()
@@ -950,6 +954,8 @@ class ServiceTab(Gtk.Box):
             replies, errors = res
             parts = sorted(set(replies)) + errors
             msg = f"{op.replace('_', ' ').capitalize()}: " + "; ".join(parts)
+            if replies and op != "reannounce":
+                msg += " · state may lag on Torbox's side"
             self.say(msg, error=bool(errors))
             self.app.refresh()
             GLib.timeout_add_seconds(5, lambda: self.app.refresh() and False)

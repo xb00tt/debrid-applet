@@ -52,7 +52,7 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 | **Copy links** | toolbar, context menu, `Ctrl+C` | every direct URL of the ticked items |
 | **Copy magnet** | context menu | magnet links rebuilt from the info hashes |
 | **Copy as aria2c command** | context menu | resumable 8-connection `aria2c` command into `~/Downloads` |
-| **Resume / Stop seeding / Reannounce** | context menu, Torbox only | what Torbox lets you do with a torrent |
+| **Resume / Stop seeding / Reannounce** | context menu, Torbox only | what Torbox lets you do with a torrent; Torbox confirms at once but the State column can lag |
 | **Delete** | toolbar, context menu, `Delete` key | removes from the service; asks once when more than one is ticked |
 
 ## Finding things
