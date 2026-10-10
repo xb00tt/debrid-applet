@@ -690,11 +690,13 @@ def test_power_helpers():
     assert da.pick_subtitle("Show.S01E01.mkv", links) == "https://s1"
     assert da.pick_subtitle("Show.S01E02.mkv", links) is None  # two candidates, none matching: skip
     assert da.pick_subtitle("x.mkv", [{"name": "only.srt", "url": "https://s"}]) == "https://s"
-    assert da.player_cmd("mpv", "https://v", "https://s") == ["mpv", "--sub-file=https://s", "https://v"]
-    assert da.player_cmd("celluloid", "https://v", "https://s") == ["celluloid", "--mpv-sub-file=https://s", "https://v"]
+    assert da.player_cmd("mpv", "https://v", "https://s") == ["mpv", "--save-position-on-quit", "--sub-file=https://s", "https://v"]
+    assert da.player_cmd("celluloid", "https://v", "https://s") == ["celluloid", "--mpv-save-position-on-quit", "--mpv-sub-file=https://s", "https://v"]
     assert da.player_cmd("vlc", "https://v", "https://s") == ["vlc", "--sub-file=https://s", "https://v"]
     assert da.player_cmd("totem", "https://v", "https://s") == ["totem", "https://v"]
-    assert da.player_cmd("mpv", "https://v", None) == ["mpv", "https://v"]
+    assert da.player_cmd("mpv", "https://v", None) == ["mpv", "--save-position-on-quit", "https://v"]
+    assert da.playlist_cmd("mpv", ["https://1", "https://2"]) == ["mpv", "--save-position-on-quit", "https://1", "https://2"]
+    assert da.playlist_cmd("vlc", ["https://1"]) == ["vlc", "https://1"]
     assert da.download_command(["https://a", "https://b"], "/d/x", "aria2c") == ["aria2c", "-c", "-x", "8", "-s", "8", "--dir=/d/x", "https://a", "https://b"]
     assert da.download_command(["https://a"], "/d/x", "wget") == ["wget", "-c", "-P", "/d/x", "https://a"]
     assert da.safe_dirname("Show: S01/E01 [x]?") == "Show_ S01_E01 [x]_"
@@ -817,6 +819,28 @@ def test_magnet_export_import(path="/tmp/debrid-test-magnets.txt"):
     with open(path, "w") as f:
         f.write("# comment\n\nmagnet:?xt=urn:btih:zzz\nhttps://host/f\n")
     assert da.read_magnets(path) == ["magnet:?xt=urn:btih:zzz", "https://host/f"]
+
+
+def test_merged_client():
+    import debrid_applet as da
+
+    class Tab:
+        def __init__(self, name, torrents):
+            self.name, self.torrents, self.client = name, torrents, self
+            self.calls = []
+        def delete(self, tid, kind="torrent"): self.calls.append(("delete", tid, kind))
+        def links(self, tid, kind="torrent"): return [{"name": f"{self.name}-{tid}", "url": "u", "size": 1}]
+        def add_magnet(self, m): self.calls.append(("magnet", m))
+    tb = Tab("Torbox", [{"id": "7", "name": "x", "done": False, "hash": "h", "kind": "torrent"}])
+    rd = Tab("Real-Debrid", [{"id": "A", "name": "y", "done": True, "hash": "", "kind": "torrent"}])
+    m = da.MergedClient(lambda: [tb, rd])
+    rows = m.torrents()
+    assert [r["id"] for r in rows] == ["Torbox|7", "Real-Debrid|A"] and rows[0]["name"] == "Torbox: x"
+    assert [r["id"] for r in m.torrents(active_only=True)] == ["Torbox|7"]
+    m.delete("Real-Debrid|A", "torrent"); assert rd.calls == [("delete", "A", "torrent")]
+    assert m.links("Torbox|7", "torrent") == [{"name": "Torbox-7", "url": "u", "size": 1}]
+    m.add_magnet("magnet:?x"); assert tb.calls == [("magnet", "magnet:?x")]  # first configured service
+    assert m.account()["plan"] == "all services" and m.name == "All"
 
 
 def test_add_label():

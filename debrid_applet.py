@@ -31,6 +31,7 @@ APP_ID = "debrid-applet"  # WM_CLASS, icon name and .desktop basename all match
 DBUS_ID = "io.github.xb00tt.DebridApplet"  # single-instance guard
 PLAYERS = ("mpv", "vlc", "celluloid", "smplayer", "totem")
 SUB_FLAG = {"mpv": "--sub-file={}", "celluloid": "--mpv-sub-file={}", "smplayer": "-sub {}", "vlc": "--sub-file={}"}
+RESUME_FLAG = {"mpv": "--save-position-on-quit", "celluloid": "--mpv-save-position-on-quit"}  # resume where you stopped
 SUB_EXT = (".srt", ".ass", ".vtt", ".sub")
 SERVICES = ("Torbox", "Real-Debrid", "AllDebrid")
 DASHBOARDS = {"Torbox": "https://torbox.app/dashboard", "Real-Debrid": "https://real-debrid.com/torrents",
@@ -158,10 +159,69 @@ def pick_subtitle(video_name, links):
 
 
 def player_cmd(player, url, sub_url=None):
-    cmd = [player]
+    cmd = [player] + ([RESUME_FLAG[player]] if player in RESUME_FLAG else [])
     if sub_url and player in SUB_FLAG:
         cmd += SUB_FLAG[player].format(sub_url).split(" ", 1) if player == "smplayer" else [SUB_FLAG[player].format(sub_url)]
     return cmd + [url]
+
+
+def playlist_cmd(player, urls):
+    """Queue several videos in one player instance (mpv, Celluloid, VLC and SMPlayer all take a list)."""
+    return [player] + ([RESUME_FLAG[player]] if player in RESUME_FLAG else []) + list(urls)
+
+
+class MergedClient:
+    """The 'All' tab: every configured service's cached list, ids prefixed 'Service|id', actions routed back."""
+    name = "All"
+
+    def __init__(self, tabs):
+        self._tabs = tabs  # callable returning the real service tabs
+
+    def _real(self):
+        return [t for t in self._tabs() if t.client is not None and not isinstance(t.client, MergedClient)]
+
+    def _route(self, tid):
+        service, _, real_id = str(tid).partition("|")
+        tab = next((t for t in self._real() if t.name == service), None)
+        if tab is None:
+            raise ApiError(f"{service}: not configured")
+        return tab.client, real_id
+
+    def account(self):
+        tabs = self._real()
+        return {"plan": "all services", "expires": "", "extra": f"{len(tabs)} configured: " + ", ".join(t.name for t in tabs)}
+
+    def torrents(self, active_only=False):
+        out = []
+        for tab in self._real():
+            for t in tab.torrents:
+                if active_only and t["done"]:
+                    continue
+                out.append({**t, "id": f"{tab.name}|{t['id']}", "name": f"{tab.name}: {t['name']}"})
+        return out
+
+    def delete(self, tid, kind="torrent"):
+        client, real_id = self._route(tid)
+        client.delete(real_id, kind)
+
+    def links(self, tid, kind="torrent"):
+        client, real_id = self._route(tid)
+        return client.links(real_id, kind)
+
+    def _first(self):
+        tabs = self._real()
+        if not tabs:
+            raise ApiError("No service configured")
+        return tabs[0].client
+
+    def add_magnet(self, magnet):
+        self._first().add_magnet(magnet)
+
+    def add_torrent_file(self, path):
+        self._first().add_torrent_file(path)
+
+    def add_link(self, url):
+        return self._first().add_link(url)
 
 
 def download_command(urls, dest, tool):
@@ -504,6 +564,7 @@ class ServiceTab(Gtk.Box):
     def __init__(self, name, client, app):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=8)
         self.name, self.client, self.app = name, client, app
+        self.is_merged = isinstance(client, MergedClient)
         self.done_ids = None  # None until first successful poll; then set of finished ids
         self.checked = set()  # ids with the checkbox on; survives refreshes
         self.torrents = []  # last poll, re-filtered on every keystroke
@@ -884,7 +945,7 @@ class ServiceTab(Gtk.Box):
 
         prev = self.done_ids
         self.done_ids = {t["id"] for t in torrents if t["done"]}
-        if prev is not None:
+        if prev is not None and not self.is_merged:  # the real tabs already notify and act
             for t in torrents:
                 if t["done"] and t["id"] not in prev:
                     if self.app.cfg["notify_done"]:
@@ -1160,7 +1221,7 @@ class ServiceTab(Gtk.Box):
                                                                  ("Reannounce", "reannounce"))]
         entries += [(None, None, True), ("Delete", self.on_delete, n >= 1)]
         menu = Gtk.Menu()
-        others = [t for t in self.app.tabs if t is not self and t.client is not None]
+        others = [t for t in self.app.tabs if t is not self and t.client is not None and not t.is_merged]
         if others:
             send = Gtk.MenuItem(label="Send to", sensitive=n >= 1 and all(t["hash"] for t in self._targets()))
             sub_menu = Gtk.Menu()
@@ -1251,6 +1312,10 @@ class ServiceTab(Gtk.Box):
             item = Gtk.MenuItem(label=v["name"][:80])
             item.connect("activate", lambda _i, v=v: self.play(v["url"], v["name"], links))
             menu.append(item)
+        menu.append(Gtk.SeparatorMenuItem())
+        play_all = Gtk.MenuItem(label=f"Play all {len(vids)} in order")
+        play_all.connect("activate", lambda _i: self.play_all([v["url"] for v in vids]))
+        menu.append(play_all)
         menu.show_all()
         menu.popup_at_pointer(None)
 
@@ -1310,6 +1375,14 @@ class ServiceTab(Gtk.Box):
             self._play_one_of(vids, links)
         else:
             self._files_dialog(t, links)
+
+    def play_all(self, urls):
+        if not self.app.player:
+            self.say("No media player found (mpv, vlc, celluloid, smplayer or totem)")
+            return
+        urls = [u for u in urls if u and u.lower().startswith(("http://", "https://"))]
+        subprocess.Popen(playlist_cmd(self.app.player, urls))
+        self.say(f"Playing {len(urls)} files in {self.app.player}")
 
     def play(self, url, name="", links=()):
         """Hand a video URL to the player, with its subtitle file when the item has a matching one."""
@@ -1550,6 +1623,8 @@ class App:
                        RealDebrid(self.cfg["realdebrid_key"]) if self.cfg["realdebrid_key"] else None, self),
             ServiceTab("AllDebrid", AllDebrid(self.cfg["alldebrid_key"]) if self.cfg["alldebrid_key"] else None, self),
         ]
+        if sum(1 for t in self.tabs if t.client) > 1:
+            self.tabs.append(ServiceTab("All", MergedClient(lambda: self.tabs), self))
         for tab in self.tabs:
             self.notebook.append_page(tab, Gtk.Label(label=tab.name))
         self.notebook.show_all()
@@ -1592,7 +1667,7 @@ class App:
             save_config(self.cfg)
 
         def on_add(service, items):
-            tab = self.tab_named(service) or next((t for t in self.tabs if t.client), None)
+            tab = self.tab_named(service) or next((t for t in self.tabs if t.client and not t.is_merged), None)
             if tab is None or tab.client is None:
                 return 0
             log_event(tab.name, f"Local API: {len(items)} item(s) queued")
@@ -1603,7 +1678,7 @@ class App:
             return len(items)
 
         def status():
-            return {t.name: {"active": t.active, "items": len(t.torrents)} for t in self.tabs if t.client}
+            return {t.name: {"active": t.active, "items": len(t.torrents)} for t in self.tabs if t.client and not t.is_merged}
         try:
             self.api = LocalApi(port, self.cfg["http_token"], on_add, lambda: GLib.idle_add(self.toggle_window), status)
             self.api.start()
@@ -1966,7 +2041,7 @@ def main():
         if opts["log"]:
             app.open_log()
         if opts["items"]:
-            tab = app.tab_named(opts["service"]) or next((t for t in app.tabs if t.client), None)
+            tab = app.tab_named(opts["service"]) or next((t for t in app.tabs if t.client and not t.is_merged), None)
             if tab is None:
                 return 1
             log_event(tab.name, f"Command line: {len(opts['items'])} item(s)")

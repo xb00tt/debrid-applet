@@ -105,6 +105,10 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 - **Send to.** Right-click → Send to → another service re-adds the ticked items there by magnet (not from AllDebrid, which gives no hashes).
 - **Export / import.** The ⋮ menu in the toolbar exports every item's magnet (`magnet<TAB>name` per line) to a file,
   imports such a file (or any file with one magnet or link per line), or copies all magnets to the clipboard.
+- **All tab.** With more than one service configured, a fourth tab lists everything together, names prefixed with
+  the service; Files, Play, Copy, Delete and friends act on the owning service. Adds from that tab go to the first
+  configured service.
+- **Resume and playlists.** mpv and Celluloid resume where you stopped; a pack's Play picker has "Play all N in order".
 - **Expiry warning.** One notification per service when premium ends within 7 days.
 - **Activity log.** Clock icon in the toolbar (or `Ctrl+L`): status messages and notifications with a timestamp,
   newest last, with Refresh / Open file / Clear. Kept in `~/.local/share/debrid-applet/activity.log`. Settings choose

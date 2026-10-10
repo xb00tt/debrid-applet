@@ -7,8 +7,6 @@ Remaining ideas from the power-user list, none started:
 
 - **RSS / watch lists** with regex filters and auto-add.
 - **Stremio / Kodi / Jellyfin hand-off** for Play.
-- **Merged view** across services with one search box.
-- **mpv resume position** (`--save-position-on-quit`) and **season-pack playlists** (all episodes queued).
 - **Retry queue for adds** when a service rate-limits or is down.
 - **Keyring storage** for API keys via libsecret.
 - **Config schema version** with migration hooks.
