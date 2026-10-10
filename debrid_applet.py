@@ -2397,13 +2397,13 @@ class WatchFolder:
 def main():
     """One instance only: a second launch is forwarded to the running one. With no flags it raises the window;
     --toggle, --log, --service NAME and --add ITEM… drive it from the shell or a hotkey."""
+    if "--version" in sys.argv:  # answered locally, no need to reach a running instance
+        print(f"debrid-applet {VERSION}")
+        return
     gapp = Gtk.Application(application_id=DBUS_ID, flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
     state = {}
 
     def on_cmdline(a, cmdline):
-        if "--version" in cmdline.get_arguments():
-            cmdline.do_print_literal(f"debrid-applet {VERSION}\n")
-            return 0
         opts = parse_cli(cmdline.get_arguments()[1:])
         first = "app" not in state
         if first:
