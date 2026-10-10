@@ -136,7 +136,14 @@ class RealDebrid(_Client):
 
     def torrents(self):
         out = []
-        for t in self._json("GET", "/torrents", params={"limit": 2500}) or []:
+        items, page = [], 1
+        while True:  # 5000 is the API maximum per page; keep going while pages come back full
+            chunk = self._json("GET", "/torrents", params={"limit": 5000, "page": page}) or []
+            items += chunk
+            if len(chunk) < 5000:
+                break
+            page += 1
+        for t in items:
             state = t.get("status", "")
             if state == "waiting_files_selection":
                 try:

@@ -82,9 +82,17 @@ def test_rd_torrents_normalize_and_autoselect():
     assert out[2]["finished"] == "2026-10-02T11:00:00.000Z" and out[2]["added"] == ""
     assert out[1]["seeds"] == 0 and out[1]["done"] is False
     assert out[2]["done"] is True
-    assert s.calls[0][2]["params"] == {"limit": 2500}
+    assert s.calls[0][2]["params"] == {"limit": 5000, "page": 1}
     assert s.calls[1][:2] == ("POST", RD + "/torrents/selectFiles/B")
     assert s.calls[1][2]["data"] == {"files": "all"}
+
+
+def test_rd_torrents_paginates():
+    full = [{"id": str(i), "filename": f"{i}", "status": "downloaded"} for i in range(5000)]
+    s = FakeSession(FakeResp(200, full), FakeResp(200, full[:3]))
+    out = RealDebrid("t", s).torrents()
+    assert len(out) == 5003 and s.calls[1][2]["params"] == {"limit": 5000, "page": 2}
+    assert len(s.calls) == 2
 
 
 def test_rd_add_magnet_selects_all():

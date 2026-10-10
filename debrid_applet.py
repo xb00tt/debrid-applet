@@ -362,6 +362,8 @@ class ServiceTab(Gtk.Box):
         self._pending = []  # (expiry, placeholder row) for items just added, until the service lists them
         self._known = set()
         self._anchor = None  # row index of the last checkbox click, for shift-click ranges
+        self._iters = {}  # id -> TreeIter of rows currently in the store, for in-place updates
+        self._shown_key = None  # (filter text, state filter) the store was last built for
         self.errors = []  # (time, message) of the last few failures, shown as the status line's tooltip
         self.active = 0
         self._is_busy = False
@@ -704,34 +706,52 @@ class ServiceTab(Gtk.Box):
             save_config(self.app.cfg)
         self._fill()
 
+    def _row_values(self, t):
+        return [
+            t["id"], t["name"], int(max(0, min(100, t["progress"]))), t["state"], human_size(t["size"]), t["kind"],
+            t["id"] in self.checked,
+            fmt_speed(t["speed"]), fmt_speed(t["up_speed"]), str(t["seeds"]), na(t["peers"]), na(t["ratio"], "{:.2f}"),
+            relative_time(t["added"]), relative_time(t["finished"]),
+            float(t["size"]), float(t["speed"] or 0), float(t["up_speed"] or -1),
+            int(t["seeds"]), -1 if t["peers"] is None else int(t["peers"]),
+            -1.0 if t["ratio"] is None else float(t["ratio"]),
+            local_time(t["added"]), local_time(t["finished"]), t["hash"],
+        ]
+
     def _fill(self):
-        """Rebuild the list from the last poll, keeping rows whose name or state matches the filter box."""
+        """Show the last poll through the filter box and state dropdown. Same filter as last time: update rows
+        in place (keeps selection and scroll, cheap for thousands of rows); otherwise rebuild."""
         q = self.search.get_text().strip().lower()
         kind = self.state_filter.get_active_id() or "all"
-        selected = self._selected()
-        self.store.clear()
-        self._anchor = None
         now = time.monotonic()
         self._pending = [(exp, row) for exp, row in self._pending if now < exp]
-        for t in [row for _exp, row in self._pending] + self.torrents:  # placeholders first
-            if q and q not in t["name"].lower() and q not in t["state"].lower():
-                continue
-            if kind != "all" and state_kind(t["state"]) != kind:
-                continue
-            self.store.append([
-                t["id"], t["name"], int(max(0, min(100, t["progress"]))), t["state"], human_size(t["size"]), t["kind"],
-                t["id"] in self.checked,
-                fmt_speed(t["speed"]), fmt_speed(t["up_speed"]), str(t["seeds"]), na(t["peers"]), na(t["ratio"], "{:.2f}"),
-                relative_time(t["added"]), relative_time(t["finished"]),
-                float(t["size"]), float(t["speed"] or 0), float(t["up_speed"] or -1),
-                int(t["seeds"]), -1 if t["peers"] is None else int(t["peers"]),
-                -1.0 if t["ratio"] is None else float(t["ratio"]),
-                local_time(t["added"]), local_time(t["finished"]), t["hash"],
-            ])
-        if selected:
-            for row in self.store:
-                if row[0] == selected["id"]:
-                    self.view.get_selection().select_iter(row.iter)
+        rows = [t for t in [row for _exp, row in self._pending] + self.torrents  # placeholders first
+                if not (q and q not in t["name"].lower() and q not in t["state"].lower())
+                and not (kind != "all" and state_kind(t["state"]) != kind)]
+        if self._shown_key == (q, kind) and self._iters:
+            wanted = {t["id"] for t in rows}
+            for tid in [tid for tid in self._iters if tid not in wanted]:
+                self.store.remove(self._iters.pop(tid))
+            for t in rows:
+                values = self._row_values(t)
+                it = self._iters.get(t["id"])
+                if it is None:
+                    self._iters[t["id"]] = self.store.append(values)
+                    continue
+                current = self.store[it]
+                changed = [i for i, v in enumerate(values) if i != CHECKED and current[i] != v]
+                if changed:
+                    self.store.set(it, changed, [values[i] for i in changed])
+        else:
+            selected = self._selected()
+            self.store.clear()
+            self._iters = {}
+            self._anchor = None
+            for t in rows:
+                self._iters[t["id"]] = self.store.append(self._row_values(t))
+            if selected and selected["id"] in self._iters:
+                self.view.get_selection().select_iter(self._iters[selected["id"]])
+            self._shown_key = (q, kind)
         self._sync_checks()
 
     # ----- actions -----
