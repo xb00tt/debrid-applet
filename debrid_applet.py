@@ -313,6 +313,7 @@ class ServiceTab(Gtk.Box):
         self._is_busy = False
         self._applying = True  # suppress columns-changed while we build or restore the layout
         self._hold_until = 0
+        self._width_timer = 0  # debounce for saving dragged column widths
 
         self.account_label = Gtk.Label(xalign=0, label="Not configured" if client is None else "Loading…")
 
@@ -377,6 +378,8 @@ class ServiceTab(Gtk.Box):
             col.set_reorderable(True)
             self.view.append_column(col)
             col.get_button().connect("button-press-event", self.on_header_press)
+            if key != "name":
+                col.connect("notify::width", self.on_width_changed)
             self.cols[key] = col
         self.apply_columns()
         self.view.set_has_tooltip(True)
@@ -417,12 +420,29 @@ class ServiceTab(Gtk.Box):
         hidden = set(cfg.get("hidden") or [])
         for key, col in self.cols.items():
             col.set_visible(key not in hidden)
+        for key, width in (cfg.get("widths") or {}).items():
+            if key in self.cols and key != "name" and int(width) > 0:
+                self.cols[key].set_fixed_width(int(width))
         sort = cfg.get("sort")
         if sort:
             idx = next((s for k, _t, _i, _k, s in COLUMNS if k == sort[0]), None)
             if idx is not None:
                 self.store.set_sort_column_id(idx, Gtk.SortType.DESCENDING if sort[1] == "desc" else Gtk.SortType.ASCENDING)
         self._applying = False
+
+    def on_width_changed(self, _col, _pspec):
+        """A header edge was dragged: save all widths once the drag settles."""
+        if self._applying:
+            return
+        if self._width_timer:
+            GLib.source_remove(self._width_timer)
+        self._width_timer = GLib.timeout_add(800, self._save_widths)
+
+    def _save_widths(self):
+        self._width_timer = 0
+        widths = {k: c.get_width() for k, c in self.cols.items() if k != "name" and c.get_visible() and c.get_width() > 0}
+        self.app.set_columns(self, widths=widths)
+        return False
 
     def on_columns_changed(self, _view):
         if self._applying:
@@ -1166,11 +1186,13 @@ class App:
         self.refresh()
         return False
 
-    def set_columns(self, tab, order=None, hide=None, sort=None):
-        """Persist one tab's column order / visibility / sort and re-apply it there."""
+    def set_columns(self, tab, order=None, hide=None, sort=None, widths=None):
+        """Persist one tab's column order / visibility / sort / widths and re-apply it there."""
         cols = column_layout(self.cfg.setdefault("columns", {}), tab.name)
         if order is not None:
             cols["order"] = order
+        if widths is not None:
+            cols["widths"] = widths
         if hide is not None:
             key, hidden = hide
             cols["hidden"] = sorted((set(cols.get("hidden") or []) | {key}) - (set() if hidden else {key}))

@@ -6,4 +6,3 @@ Everything from the UX review is built; Torbox, Real-Debrid and AllDebrid are ve
   (`account`, `torrents`, `add_magnet`, `add_torrent_file`, `add_link`, `links`, `delete`), a key field in
   Settings, a line in `build_tabs()`. Needs an account to test against; Premiumize offers no trial.
 - AllDebrid: `.torrent` upload and hoster-link unlock are implemented and unit-tested but not yet tried live.
-- Column widths you drag are not remembered (order, visibility and sort are).

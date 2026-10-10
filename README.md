@@ -61,7 +61,7 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 - Filter box matches name or state as you type; the dropdown next to it narrows by state
   (Active / Done / Seeding / Stalled / Error); the dropdown choice is remembered per service (toggle in Settings). `Ctrl+F` focuses the box, `Esc` clears it.
 - Lists start newest-first. Click a header to sort, drag headers to reorder or their edges to resize, right-click a header to show or hide columns.
-  Layout and sort are remembered per service. Columns a service never reports are hidden by default
+  Layout, widths and sort are remembered per service. Columns a service never reports are hidden by default
   (Real-Debrid: Up / Peers / Ratio, AllDebrid: Peers / Ratio).
 - Dates read "2 hours ago"; hover for the exact time.
 
