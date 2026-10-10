@@ -39,6 +39,8 @@ GLib.set_prgname(APP_ID)
 
 CONFIG_DIR = os.path.expanduser("~/.config/debrid-applet")
 CONFIG = os.path.join(CONFIG_DIR, "config.json")
+LOG_FILE = os.path.join(os.path.expanduser("~/.local/share/debrid-applet"), "activity.log")
+LOG_MAX = 1_000_000  # bytes; trimmed to the newest ~200 KB when exceeded
 EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "notify_added": True, "notify_done": True,
                 "watch_clipboard": True, "columns": {}, "window": [],  # columns: per-service, see column_layout()
                 "remember_filter": True, "filters": {},  # filters: last state-filter choice per service
@@ -212,11 +214,43 @@ def text_button(icon, label, cb):
     return btn
 
 
+def append_log(path, service, message):
+    """One human-readable line per event; the file is trimmed when it grows past LOG_MAX."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    try:
+        if os.path.getsize(path) > LOG_MAX:
+            with open(path, "rb") as f:
+                f.seek(-200_000, os.SEEK_END)
+                tail = f.read().split(b"\n", 1)[-1]
+            with open(path, "wb") as f:
+                f.write(tail)
+    except OSError:
+        pass
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {service:<12} {message}\n")
+
+
+def read_log_tail(path, lines=500):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            return "".join(f.readlines()[-lines:])
+    except OSError:
+        return ""
+
+
+def log_event(service, message):
+    try:
+        append_log(LOG_FILE, service, message)
+    except OSError:
+        pass
+
+
 _NOTES = []  # notifications with buttons must stay referenced until clicked or closed
 
 
 def notify(title, body, actions=()):
     """Desktop notification; actions = [(label, callback)] become buttons."""
+    log_event("", f"{title}: {body}")
     note = Notify.Notification.new(title, body, APP_ID)
     for label, cb in actions:
         note.add_action(label.lower().replace(" ", "-"), label, lambda _n, _a, *_, cb=cb: cb())
@@ -377,7 +411,8 @@ class ServiceTab(Gtk.Box):
         for icon, tip, cb in (("list-add-symbolic", "Add magnets / links", self.on_add),
                               ("document-open-symbolic", "Add .torrent files", self.on_torrent_file),
                               ("view-refresh-symbolic", "Refresh", app.refresh),
-                              ("emblem-system-symbolic", "Settings", app.open_settings)):
+                              ("emblem-system-symbolic", "Settings", app.open_settings),
+                              ("document-open-recent-symbolic", "Activity log (Ctrl+L)", app.open_log)):
             row.pack_start(icon_button(icon, tip, cb), False, False, 0)
         self.play_btn = text_button("media-playback-start-symbolic", "Play", self.on_play)
         self.links_btn = text_button("view-list-symbolic", "Files", self.on_files)
@@ -626,6 +661,7 @@ class ServiceTab(Gtk.Box):
         """Status line message that polls leave alone for a few seconds. Errors stay in the tooltip."""
         self.status.set_markup(red(msg) if error else GLib.markup_escape_text(msg))
         self._hold_until = time.monotonic() + STATUS_HOLD
+        log_event(self.name, ("ERROR " if error else "") + msg)
         if error and (not self.errors or self.errors[-1][1] != msg):
             self.errors = (self.errors + [(time.strftime("%H:%M:%S"), msg)])[-8:]
             self.status.set_tooltip_text("Recent errors:\n" + "\n".join(f"{t}  {m}" for t, m in self.errors))
@@ -1270,6 +1306,7 @@ class App:
             tab = self.tab_named(service) or next((t for t in self.tabs if t.client), None)
             if tab is None or tab.client is None:
                 return 0
+            log_event(tab.name, f"Local API: {len(items)} item(s) queued")
             GLib.idle_add(tab.add_items, list(items))
             return len(items)
 
@@ -1278,6 +1315,7 @@ class App:
         try:
             self.api = LocalApi(port, self.cfg["http_token"], on_add, lambda: GLib.idle_add(self.toggle_window), status)
             self.api.start()
+            log_event("", f"Local API listening on 127.0.0.1:{port}")
         except OSError as e:
             self.api = None
             notify("Local API not started", f"Port {port}: {e}")
@@ -1294,6 +1332,8 @@ class App:
             tab.search.grab_focus()
         elif ctrl and key == Gdk.KEY_r:
             self.refresh()
+        elif ctrl and key == Gdk.KEY_l:
+            self.open_log()
         elif self.window.get_focus() is tab.view and key == Gdk.KEY_Delete:
             tab.on_delete(None)
         elif self.window.get_focus() is tab.view and ctrl and key == Gdk.KEY_a:
@@ -1397,6 +1437,37 @@ class App:
         if self._settings_shown_for != key:
             self._settings_shown_for = key
             self.open_settings()
+
+    def open_log(self, *_):
+        """Human-readable activity log: every status message and notification, newest at the bottom."""
+        dlg = Gtk.Dialog(title="Activity log", transient_for=self.window, default_width=900, default_height=500)
+        box = dlg.get_content_area()
+        box.set_property("margin", 8)
+        view = Gtk.TextView(editable=False, monospace=True, left_margin=6, right_margin=6, cursor_visible=False)
+        scroller = Gtk.ScrolledWindow(vexpand=True, shadow_type=Gtk.ShadowType.IN)
+        scroller.add(view)
+        box.pack_start(scroller, True, True, 0)
+
+        def load(*_):
+            text = read_log_tail(LOG_FILE) or "(nothing logged yet)"
+            view.get_buffer().set_text(text)
+            GLib.idle_add(lambda: view.scroll_to_iter(view.get_buffer().get_end_iter(), 0, False, 0, 1) and False)
+
+        def clear(*_):
+            try:
+                open(LOG_FILE, "w").close()
+            except OSError:
+                pass
+            load()
+        actions = Gtk.Box(spacing=6)
+        actions.pack_start(text_button("view-refresh-symbolic", "Refresh", load), False, False, 0)
+        actions.pack_start(text_button("document-open-symbolic", "Open file", lambda *_: open_url("file://" + LOG_FILE) or subprocess.Popen(["xdg-open", LOG_FILE])), False, False, 0)
+        actions.pack_start(text_button("edit-clear-symbolic", "Clear", clear), False, False, 0)
+        box.pack_start(actions, False, False, 0)
+        dlg.add_button("Close", Gtk.ResponseType.CLOSE)
+        dlg.connect("response", lambda d, _r: d.destroy())
+        dlg.show_all()
+        load()
 
     def open_settings(self, *_):
         dlg = Gtk.Dialog(title="Debrid settings", transient_for=self.window, modal=True)
@@ -1526,6 +1597,7 @@ class WatchFolder:
             return False
         self.busy.add(path)
         label = add_label(path)
+        log_event(tab.name, f"Watch folder: uploading {label}")
 
         def after(_added, errors):
             self.busy.discard(path)

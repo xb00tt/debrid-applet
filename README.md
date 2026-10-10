@@ -68,7 +68,7 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 
 ## Keys
 
-`Delete` · `Ctrl+A` tick all / none · `Ctrl+C` copy links · `Ctrl+F` filter · `Ctrl+R` refresh · `Esc` clear filter, then hide window
+`Delete` · `Ctrl+A` tick all / none · `Ctrl+C` copy links · `Ctrl+F` filter · `Ctrl+R` refresh · `Ctrl+L` activity log · `Esc` clear filter, then hide window
 
 ## Power features
 
@@ -92,6 +92,8 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 
   `service` is optional; without it the first configured service is used.
 - **Expiry warning.** One notification per service when premium ends within 7 days.
+- **Activity log.** Clock icon in the toolbar (or `Ctrl+L`): every status message and notification with a timestamp,
+  newest last, with Refresh / Open file / Clear. Kept in `~/.local/share/debrid-applet/activity.log`, trimmed at 1 MB.
 - **Subtitles.** Play hands a matching `.srt` / `.ass` / `.vtt` from the same item to mpv, Celluloid, SMPlayer
   or VLC (same file name as the video, or the item's only subtitle).
 
@@ -114,7 +116,7 @@ The first four toggles are on by default.
 
 - Polls every 8 s while something is downloading, every 60 s when idle. Hover the tray icon to see the current interval.
 - Whole lists are fetched every poll (Real-Debrid paged 5000 at a time); rows update in place, so lists with 10k+ items stay usable.
-- Red text in the status line is the service's own error message; hover the status line for the last few.
+- Red text in the status line is the service's own error message; hover the status line for the last few, or open the activity log for everything.
 - Window size, column layout and widths, sort order and state filter persist across restarts, per service.
 - Config lives in `~/.config/debrid-applet/config.json`; delete it to start over. To see the one-time double-click question again, set `dblclick_asked` to `false` there.
 

@@ -714,6 +714,25 @@ def test_local_api():
     api.stop()
 
 
+def test_activity_log(path="/tmp/debrid-test-activity.log"):
+    import os
+    import debrid_applet as da
+    if os.path.exists(path):
+        os.remove(path)
+    da.append_log(path, "Torbox", "Added 1")
+    da.append_log(path, "", "Local API started on port 1")
+    lines = open(path).read().splitlines()
+    assert len(lines) == 2 and lines[0].endswith("  Torbox       Added 1") and "Local API" in lines[1]
+    assert len(lines[0].split("  ")[0]) == 19  # YYYY-MM-DD HH:MM:SS
+    with open(path, "w") as f:
+        f.write("x" * 2_000_000 + "\n")
+    da.append_log(path, "AllDebrid", "after rotation")
+    data = open(path).read()
+    assert len(data) < 300_000 and data.endswith("after rotation\n")
+    assert da.read_log_tail(path, 1).strip().endswith("after rotation")
+    assert da.read_log_tail("/nonexistent/x.log", 5) == ""
+
+
 def test_add_label():
     import debrid_applet
     assert debrid_applet.add_label("magnet:?xt=urn:btih:abc&dn=Some+Name+S01") == "Some Name S01"
