@@ -754,6 +754,9 @@ class ServiceTab(Gtk.Box):
                 except ApiError as e:
                     errors.append(f"{add_label(item)}: {e}")
                     continue
+                except OSError as e:  # unreadable .torrent path
+                    errors.append(f"{add_label(item)}: {e.strerror or e}")
+                    continue
                 added.append(add_label(item))
                 if url:
                     urls.append(url)
