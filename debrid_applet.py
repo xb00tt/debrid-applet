@@ -110,6 +110,7 @@ def icon_button(icon, tip, cb):
 def text_button(icon, label, cb):
     btn = Gtk.Button(label=label, image=Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.BUTTON),
                      always_show_image=True)
+    btn.get_image().set_margin_end(6)  # gap between icon and text
     btn.connect("clicked", cb)
     return btn
 
