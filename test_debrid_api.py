@@ -504,7 +504,8 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
     debrid_applet.CONFIG_DIR = tmp_dir
     debrid_applet.CONFIG = os.path.join(tmp_dir, "config.json")
     defaults = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "notify_added": True, "notify_done": True,
-                "watch_clipboard": True, "columns": {}, "window": [], "remember_filter": True, "filters": {}}
+                "watch_clipboard": True, "columns": {}, "window": [], "remember_filter": True, "filters": {},
+                "dblclick_play": False}
     assert debrid_applet.load_config() == defaults
     debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b", "notify_done": False})
     assert debrid_applet.column_layout({}, "AllDebrid")["hidden"] == ["peers", "ratio"]
@@ -606,6 +607,8 @@ def test_video_links_and_magnet():
     assert debrid_applet.video_links(links) == [{"name": "ep1.mkv", "url": "https://cdn/1"}]
     assert debrid_applet.video_links(links[:1] + links[2:]) == [{"name": "ep1.srt", "url": "https://cdn/s"}]
     assert debrid_applet.video_links([]) == []
+    assert debrid_applet.strict_videos(links) == [{"name": "ep1.mkv", "url": "https://cdn/1"}]
+    assert debrid_applet.strict_videos(links[:1] + links[2:]) == []
     assert debrid_applet.magnet_for("ABC123", "My Show S01") == "magnet:?xt=urn:btih:ABC123&dn=My%20Show%20S01"
     assert debrid_applet.magnet_for("", "x") == ""
 

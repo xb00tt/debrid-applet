@@ -34,7 +34,8 @@ CONFIG_DIR = os.path.expanduser("~/.config/debrid-applet")
 CONFIG = os.path.join(CONFIG_DIR, "config.json")
 EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "notify_added": True, "notify_done": True,
                 "watch_clipboard": True, "columns": {}, "window": [],  # columns: per-service, see column_layout()
-                "remember_filter": True, "filters": {}}  # filters: last state-filter choice per service
+                "remember_filter": True, "filters": {},  # filters: last state-filter choice per service
+                "dblclick_play": False}  # double-click plays videos instead of opening the file panel
 POLL_FAST, POLL_SLOW = 8, 60  # seconds between polls while something is active / when everything is idle
 INVALID_KEY = "Invalid API key"
 
@@ -113,6 +114,11 @@ def video_links(links):
     """Playable entries from a links() result: video files first, else any real file but the zip bundle."""
     usable = [l for l in links if l["url"] and not l["name"].startswith("All files")]
     return [l for l in usable if l["name"].lower().endswith(VIDEO_EXT)] or usable
+
+
+def strict_videos(links):
+    """Only real video files with a URL (no fallback to other files)."""
+    return [l for l in links if l["url"] and l["name"].lower().endswith(VIDEO_EXT)]
 
 
 def magnet_for(hash_, name):
@@ -386,7 +392,7 @@ class ServiceTab(Gtk.Box):
         self.view.set_enable_search(False)  # the filter box does this job; typeahead would steal keys
         self.view.connect("query-tooltip", self.on_query_tooltip)
         self.view.connect("button-press-event", self.on_row_press)
-        self.view.connect("row-activated", lambda *_: self.on_play(None) if self.app.player else self.on_files(None))
+        self.view.connect("row-activated", self.on_row_activated)
         self.view.connect("columns-changed", self.on_columns_changed)
         self.store.connect("sort-column-changed", self.on_sort_changed)
         scroller = Gtk.ScrolledWindow(vexpand=True)
@@ -832,6 +838,19 @@ class ServiceTab(Gtk.Box):
             copy_text("\n".join(magnets))
         self.say(f"Copied {len(magnets)} magnet link(s)" if magnets else "No hash known for the selection")
 
+    def _play_one_of(self, vids):
+        """One candidate plays at once; several show a picker."""
+        if len(vids) == 1:
+            self.play(vids[0]["url"])
+            return
+        menu = Gtk.Menu()
+        for v in vids:
+            item = Gtk.MenuItem(label=v["name"][:80])
+            item.connect("activate", lambda _i, url=v["url"]: self.play(url))
+            menu.append(item)
+        menu.show_all()
+        menu.popup_at_pointer(None)
+
     def on_play(self, _w):
         targets = self._targets()
         if len(targets) != 1 or not self.app.player:
@@ -842,19 +861,31 @@ class ServiceTab(Gtk.Box):
             if err:
                 return
             vids = video_links(links)
-            if not vids:
-                self.say("Nothing playable yet (not finished?)")
-            elif len(vids) == 1:
-                self.play(vids[0]["url"])
+            if vids:
+                self._play_one_of(vids)
             else:
-                menu = Gtk.Menu()
-                for v in vids:
-                    item = Gtk.MenuItem(label=v["name"][:80])
-                    item.connect("activate", lambda _i, url=v["url"]: self.play(url))
-                    menu.append(item)
-                menu.show_all()
-                menu.popup_at_pointer(None)
+                self.say("Nothing playable yet (not finished?)")
         self._run(lambda: self.client.links(t["id"], t["kind"]), pick)
+
+    def on_row_activated(self, *_):
+        """Double-click: the file panel, or (if enabled in Settings) play when the item has video files."""
+        targets = self._targets()
+        if len(targets) != 1:
+            return
+        t = targets[0]
+        if not (self.app.cfg.get("dblclick_play") and self.app.player):
+            self.open_files_for(t)
+            return
+
+        def decide(links, err):
+            if err:
+                return
+            vids = strict_videos(links)
+            if vids:
+                self._play_one_of(vids)
+            else:
+                self._files_dialog(t, links)
+        self._run(lambda: self.client.links(t["id"], t["kind"]), decide)
 
     def play(self, url):
         if not self.app.player:
@@ -1227,12 +1258,13 @@ class App:
         for i, (key, label) in enumerate((("notify_added", "Notify when torrent added"),
                                           ("notify_done", "Notify when download finishes on service"),
                                           ("watch_clipboard", "Watch clipboard for magnet links"),
-                                          ("remember_filter", "Remember the state filter between runs")), start=3):
+                                          ("remember_filter", "Remember the state filter between runs"),
+                                          ("dblclick_play", "Double-click plays videos (otherwise opens Files)")), start=3):
             check = Gtk.CheckButton(label=label, active=bool(self.cfg[key]))
             grid.attach(check, 0, i, 2, 1)
             checks[key] = check
         result = Gtk.Label(xalign=0, wrap=True)
-        grid.attach(result, 0, 7, 2, 1)
+        grid.attach(result, 0, 8, 2, 1)
         dlg.get_content_area().add(grid)
         dlg.show_all()
 

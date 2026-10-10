@@ -49,8 +49,8 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 
 | Action | Where | What it does |
 |---|---|---|
-| **Play** | toolbar, context menu, double-click | streams the video in your player; picker when there are several |
-| **Files** | toolbar, context menu, finished notification | panel with every file and its size; tick some, then Download via browser / Play / Copy links / aria2c command |
+| **Play** | toolbar, context menu | streams the video in your player; picker when there are several |
+| **Files** | toolbar, context menu, double-click, finished notification | panel with every file and its size; tick some, then Download via browser / Play / Copy links / aria2c command |
 | **Copy links** | toolbar, context menu, `Ctrl+C` | every direct URL of the ticked items |
 | **Copy magnet** | context menu | magnet links rebuilt from the info hashes (not on AllDebrid, its API doesn't return them) |
 | **Copy as aria2c command** | context menu | resumable 8-connection `aria2c` command into `~/Downloads` |
@@ -79,8 +79,9 @@ Right-click the tray icon → **Settings…**, or the gear in the toolbar.
   notification carries an **Open files** button).
 - Watch clipboard for magnet links.
 - Remember the state filter between runs.
+- Double-click plays videos (otherwise opens Files). Off by default; when on, items without video files still open Files.
 
-All four toggles are on by default.
+The first four toggles are on by default.
 
 ## Behind the scenes
 
