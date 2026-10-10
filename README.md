@@ -137,18 +137,16 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 
 ## Settings
 
-Right-click the tray icon → **Settings…**, or the gear in the toolbar.
+Right-click the tray icon → **Settings…**, or the gear in the toolbar. Four pages:
 
-- Torbox, Real-Debrid and AllDebrid API keys, with **Test keys** to check them live.
-- Custom play command; watch folder and which service it uploads to; download folder; RSS feeds and their interval; local API port and token; activity log level and size cap.
-- Notify when a torrent is added · Notify when a download finishes on the service (the "finished"
-  notification carries an **Open files** button).
-- Watch clipboard for magnet links.
-- Remember the state filter between runs.
-- Double-click plays videos (otherwise opens Files). Off by default; the first time you double-click an item with video files the applet asks once whether to turn it on. When on, items without video files still open Files.
-- Download finished items automatically, videos only, delete after download; Torbox stop seeding when done; keys in the system keyring. All off by default.
+- **Accounts**: the three API keys with **Test keys**, and whether to keep them in the system keyring.
+- **Behaviour**: notifications (added, finished), clipboard watcher, remembered state filter, double-click
+  plays videos, custom play command.
+- **Automation**: watch folder and its target service; RSS feeds and their interval; what happens when an item
+  finishes (auto-download, videos only, delete afterwards, download folder; Torbox stop seeding).
+- **Advanced**: local API port and token; activity log level and size cap.
 
-The first four toggles are on by default.
+Notifications, clipboard watcher and remembered filter are on by default; everything else is off until you turn it on.
 
 ## Behind the scenes
 

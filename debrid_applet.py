@@ -2075,126 +2075,13 @@ class App:
         load()
 
     def open_settings(self, *_):
-        dlg = Gtk.Dialog(title="Debrid settings", transient_for=self.window, modal=True)
-        TEST = 1
-        dlg.add_buttons("Test keys", TEST, "Cancel", Gtk.ResponseType.CANCEL, "Save", Gtk.ResponseType.OK)
-        grid = Gtk.Grid(row_spacing=6, column_spacing=6, margin=12)
-        row = 0
-        entries, checks = {}, {}
-        for key, label, secret in (("torbox_key", "Torbox API key", True),
-                                   ("realdebrid_key", "Real-Debrid API key", True),
-                                   ("alldebrid_key", "AllDebrid API key", True),
-                                   ("player_command", "Custom play command ({url}, {sub})", False),
-                                   ("watch_dir", "Watch folder for .torrent files", False),
-                                   ("download_dir", "Download folder (auto-download)", False)):
-            entry = Gtk.Entry(text=str(self.cfg.get(key) or ""), visibility=not secret, width_chars=48)
-            grid.attach(Gtk.Label(label=label, xalign=0), 0, row, 1, 1)
-            grid.attach(entry, 1, row, 1, 1)
-            entries[key] = entry
-            row += 1
-        watch_service = Gtk.ComboBoxText()
-        for name in SERVICES:
-            watch_service.append(name, name)
-        watch_service.set_active_id(self.cfg.get("watch_service") or SERVICES[0])
-        grid.attach(Gtk.Label(label="Upload watched files to", xalign=0), 0, row, 1, 1)
-        grid.attach(watch_service, 1, row, 1, 1)
-        row += 1
-        port = Gtk.SpinButton.new_with_range(0, 65535, 1)
-        port.set_value(int(self.cfg.get("http_port") or 0))
-        port.set_tooltip_text("0 = off. Every call needs the token below: ?token=… or header X-Debrid-Token")
-        grid.attach(Gtk.Label(label="Local API port (0 = off)", xalign=0), 0, row, 1, 1)
-        grid.attach(port, 1, row, 1, 1)
-        row += 1
-        token = Gtk.Entry(text=self.cfg.get("http_token") or "(generated when the port is set)", editable=False, width_chars=48)
-        token.set_tooltip_text("Random secret created on first use; delete it from config.json to get a new one")
-        grid.attach(Gtk.Label(label="Local API token", xalign=0), 0, row, 1, 1)
-        grid.attach(token, 1, row, 1, 1)
-        row += 1
-        feeds_view = Gtk.TextView(wrap_mode=Gtk.WrapMode.NONE, left_margin=6, right_margin=6, top_margin=4, bottom_margin=4)
-        feeds_view.get_buffer().set_text(self.cfg.get("feeds") or "")
-        feeds_scroller = Gtk.ScrolledWindow(shadow_type=Gtk.ShadowType.IN, min_content_height=70)
-        feeds_scroller.add(feeds_view)
-        feeds_label = Gtk.Label(label="RSS feeds, one per line:\nurl | regex | service", xalign=0)
-        grid.attach(feeds_label, 0, row, 1, 1)
-        grid.attach(feeds_scroller, 1, row, 1, 1)
-        row += 1
-        feed_min = Gtk.SpinButton.new_with_range(1, 1440, 1)
-        feed_min.set_value(int(self.cfg.get("feed_interval_min") or 15))
-        grid.attach(Gtk.Label(label="Check feeds every (minutes)", xalign=0), 0, row, 1, 1)
-        grid.attach(feed_min, 1, row, 1, 1)
-        row += 1
-        log_level = Gtk.ComboBoxText()
-        for key, label in LOG_LEVELS:
-            log_level.append(key, label)
-        log_level.set_active_id(self.cfg.get("log_level") or "actions")
-        grid.attach(Gtk.Label(label="Activity log", xalign=0), 0, row, 1, 1)
-        grid.attach(log_level, 1, row, 1, 1)
-        row += 1
-        log_max = Gtk.SpinButton.new_with_range(50, 100000, 50)
-        log_max.set_value(int(self.cfg.get("log_max_kb") or 1000))
-        grid.attach(Gtk.Label(label="Activity log size limit (KB)", xalign=0), 0, row, 1, 1)
-        grid.attach(log_max, 1, row, 1, 1)
-        row += 1
-        for key, label in (("notify_added", "Notify when torrent added"),
-                           ("notify_done", "Notify when download finishes on service"),
-                           ("watch_clipboard", "Watch clipboard for magnet links"),
-                           ("remember_filter", "Remember the state filter between runs"),
-                           ("dblclick_play", "Double-click plays videos (otherwise opens Files)"),
-                           ("auto_download", "Download finished items automatically (aria2c, else wget)"),
-                           ("auto_download_videos_only", "    …video files only"),
-                           ("delete_after_download", "    …then delete the item from the service"),
-                           ("stop_seeding_when_done", "Torbox: stop seeding as soon as an item finishes"),
-                           ("keys_in_keyring", "Store API keys in the system keyring instead of config.json")):
-            check = Gtk.CheckButton(label=label, active=bool(self.cfg.get(key)))
-            if key == "keys_in_keyring" and Secret is None:
-                check.set_sensitive(False)
-                check.set_tooltip_text("libsecret (gir1.2-secret-1) is not installed")
-            grid.attach(check, 0, row, 2, 1)
-            checks[key] = check
-            row += 1
-        result = Gtk.Label(xalign=0, wrap=True)
-        grid.attach(result, 0, row, 2, 1)
-        dlg.get_content_area().add(grid)
+        dlg = Gtk.Dialog(title="Debrid settings", transient_for=self.window, modal=True, default_width=720)
+        dlg.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Save", Gtk.ResponseType.OK)
+        form = SettingsForm(self.cfg)
+        dlg.get_content_area().pack_start(form.widget, True, True, 0)
         dlg.show_all()
-
-        def test_keys():
-            clients = [(cls, entries[key].get_text().strip())
-                       for cls, key in ((Torbox, "torbox_key"), (RealDebrid, "realdebrid_key"), (AllDebrid, "alldebrid_key"))]
-
-            def work():
-                parts = []
-                for cls, token in clients:
-                    if not token:
-                        continue
-                    try:
-                        a = cls(token).account()
-                        parts.append((cls.name, f"{a['plan']}, expires {a['expires'] or '—'}", False))
-                    except ApiError as e:
-                        parts.append((cls.name, str(e), True))
-                return parts
-
-            def show(parts, err):
-                if err:
-                    result.set_markup(red(err))
-                    return
-                result.set_markup("\n".join(
-                    (red(f"{n}: {m}") if bad else f"{GLib.markup_escape_text(n)}: {GLib.markup_escape_text(m)}")
-                    for n, m, bad in parts) or "No keys entered")
-            result.set_text("Testing…")
-            run_async(work, show)
-
-        while (resp := dlg.run()) == TEST:
-            test_keys()
-        if resp == Gtk.ResponseType.OK:
-            self.cfg.update({k: e.get_text().strip() for k, e in entries.items()})
-            self.cfg.update({k: c.get_active() for k, c in checks.items()})
-            self.cfg["watch_service"] = watch_service.get_active_id() or SERVICES[0]
-            self.cfg["http_port"] = int(port.get_value())
-            fb = feeds_view.get_buffer()
-            self.cfg["feeds"] = fb.get_text(fb.get_start_iter(), fb.get_end_iter(), False)
-            self.cfg["feed_interval_min"] = int(feed_min.get_value())
-            self.cfg["log_level"] = log_level.get_active_id() or "actions"
-            self.cfg["log_max_kb"] = int(log_max.get_value())
+        if dlg.run() == Gtk.ResponseType.OK:
+            self.cfg.update(form.values())
             self.apply_log_settings()
             save_config(self.cfg)
             self.build_tabs()
@@ -2203,6 +2090,188 @@ class App:
             self.feeds.start()
             self.start_api()
         dlg.destroy()
+
+
+class SettingsForm:
+    """The Settings pages. widget is a Gtk.Notebook; values() returns the edited config fields."""
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.entries, self.checks, self.combos, self.spins, self.texts = {}, {}, {}, {}, {}
+        self.widget = Gtk.Notebook()
+        self._accounts()
+        self._behaviour()
+        self._automation()
+        self._advanced()
+
+    # -- building blocks
+    def _page(self, title):
+        grid = Gtk.Grid(row_spacing=8, column_spacing=10, margin=14)
+        grid.set_column_homogeneous(False)
+        self.widget.append_page(grid, Gtk.Label(label=title))
+        grid._row = 0
+        return grid
+
+    def _heading(self, grid, text):
+        label = Gtk.Label(xalign=0, use_markup=True, label=f"<b>{GLib.markup_escape_text(text)}</b>")
+        label.set_margin_top(6 if grid._row else 0)
+        grid.attach(label, 0, grid._row, 2, 1)
+        grid._row += 1
+
+    def _entry(self, grid, key, label, secret=False, hint=""):
+        entry = Gtk.Entry(text=str(self.cfg.get(key) or ""), visibility=not secret, width_chars=40, hexpand=True)
+        if hint:
+            entry.set_placeholder_text(hint)
+        grid.attach(Gtk.Label(label=label, xalign=0), 0, grid._row, 1, 1)
+        grid.attach(entry, 1, grid._row, 1, 1)
+        grid._row += 1
+        self.entries[key] = entry
+        return entry
+
+    def _check(self, grid, key, label, tooltip="", sensitive=True):
+        check = Gtk.CheckButton(label=label, active=bool(self.cfg.get(key)), sensitive=sensitive)
+        if tooltip:
+            check.set_tooltip_text(tooltip)
+        grid.attach(check, 0, grid._row, 2, 1)
+        grid._row += 1
+        self.checks[key] = check
+        return check
+
+    def _combo(self, grid, key, label, options):
+        combo = Gtk.ComboBoxText()
+        for value, text in options:
+            combo.append(value, text)
+        combo.set_active_id(self.cfg.get(key) or options[0][0])
+        grid.attach(Gtk.Label(label=label, xalign=0), 0, grid._row, 1, 1)
+        grid.attach(combo, 1, grid._row, 1, 1)
+        grid._row += 1
+        self.combos[key] = combo
+        return combo
+
+    def _spin(self, grid, key, label, lo, hi, step=1, tooltip=""):
+        spin = Gtk.SpinButton.new_with_range(lo, hi, step)
+        spin.set_value(int(self.cfg.get(key) or 0))
+        if tooltip:
+            spin.set_tooltip_text(tooltip)
+        grid.attach(Gtk.Label(label=label, xalign=0), 0, grid._row, 1, 1)
+        grid.attach(spin, 1, grid._row, 1, 1)
+        grid._row += 1
+        self.spins[key] = spin
+        return spin
+
+    def _text(self, grid, key, label, height=80):
+        view = Gtk.TextView(wrap_mode=Gtk.WrapMode.NONE, left_margin=6, right_margin=6, top_margin=4, bottom_margin=4)
+        view.get_buffer().set_text(self.cfg.get(key) or "")
+        scroller = Gtk.ScrolledWindow(shadow_type=Gtk.ShadowType.IN, min_content_height=height, hexpand=True)
+        scroller.add(view)
+        grid.attach(Gtk.Label(label=label, xalign=0, yalign=0), 0, grid._row, 1, 1)
+        grid.attach(scroller, 1, grid._row, 1, 1)
+        grid._row += 1
+        self.texts[key] = view
+        return view
+
+    def _note(self, grid, text):
+        label = Gtk.Label(xalign=0, wrap=True, label=text)
+        label.get_style_context().add_class("dim-label")
+        grid.attach(label, 0, grid._row, 2, 1)
+        grid._row += 1
+        return label
+
+    # -- pages
+    def _accounts(self):
+        g = self._page("Accounts")
+        self._heading(g, "API keys")
+        self._entry(g, "torbox_key", "Torbox", secret=True, hint="torbox.app → Settings → API")
+        self._entry(g, "realdebrid_key", "Real-Debrid", secret=True, hint="real-debrid.com/apitoken")
+        self._entry(g, "alldebrid_key", "AllDebrid", secret=True, hint="alldebrid.com/apikeys")
+        test = Gtk.Button(label="Test keys")
+        test.set_halign(Gtk.Align.START)
+        g.attach(test, 1, g._row, 1, 1)
+        g._row += 1
+        result = self._note(g, "Keys stay on this machine: config.json (mode 600) or the system keyring.")
+        test.connect("clicked", lambda _b: self.test_keys(result))
+        self._heading(g, "Storage")
+        self._check(g, "keys_in_keyring", "Store API keys in the system keyring instead of config.json",
+                    tooltip="" if Secret else "libsecret (gir1.2-secret-1) is not installed", sensitive=Secret is not None)
+
+    def _behaviour(self):
+        g = self._page("Behaviour")
+        self._heading(g, "Notifications")
+        self._check(g, "notify_added", "When a torrent is added")
+        self._check(g, "notify_done", "When a download finishes on the service")
+        self._heading(g, "Convenience")
+        self._check(g, "watch_clipboard", "Watch the clipboard for magnet links")
+        self._check(g, "remember_filter", "Remember the state filter between runs")
+        self._heading(g, "Playback")
+        self._check(g, "dblclick_play", "Double-click plays videos (otherwise opens Files)")
+        self._entry(g, "player_command", "Custom play command", hint="stremio {url}   or   mpv --fs {url} --sub-file={sub}")
+        self._note(g, "Empty = the first of mpv, VLC, Celluloid, SMPlayer, Totem found on this machine.")
+
+    def _automation(self):
+        g = self._page("Automation")
+        self._heading(g, "Watch folder")
+        self._entry(g, "watch_dir", "Folder", hint="~/Downloads/torrents")
+        self._combo(g, "watch_service", "Upload new .torrent files to", [(s, s) for s in SERVICES])
+        self._heading(g, "RSS feeds")
+        self._text(g, "feeds", "One per line:\nurl | regex | service")
+        self._spin(g, "feed_interval_min", "Check every (minutes)", 1, 1440)
+        self._heading(g, "When an item finishes")
+        self._check(g, "auto_download", "Download it automatically (aria2c, else wget)")
+        self._check(g, "auto_download_videos_only", "    …video files only")
+        self._check(g, "delete_after_download", "    …then delete it from the service")
+        self._entry(g, "download_dir", "Download folder", hint="~/Downloads")
+        self._check(g, "stop_seeding_when_done", "Torbox: stop seeding right away")
+
+    def _advanced(self):
+        g = self._page("Advanced")
+        self._heading(g, "Local API")
+        self._spin(g, "http_port", "Port (0 = off)", 0, 65535, tooltip="curl 'http://127.0.0.1:PORT/add?token=…&magnet=…'")
+        token = Gtk.Entry(text=self.cfg.get("http_token") or "(generated when the port is set)", editable=False, hexpand=True)
+        g.attach(Gtk.Label(label="Token", xalign=0), 0, g._row, 1, 1)
+        g.attach(token, 1, g._row, 1, 1)
+        g._row += 1
+        self._note(g, "Every call needs ?token=… or an X-Debrid-Token header. Delete http_token in config.json for a new one.")
+        self._heading(g, "Activity log")
+        self._combo(g, "log_level", "Level", list(LOG_LEVELS))
+        self._spin(g, "log_max_kb", "Size limit (KB)", 50, 100000, 50)
+        self._note(g, f"File: {LOG_FILE}")
+
+    # -- results
+    def values(self):
+        out = {k: e.get_text().strip() for k, e in self.entries.items()}
+        out.update({k: c.get_active() for k, c in self.checks.items()})
+        out.update({k: (c.get_active_id() or "") for k, c in self.combos.items()})
+        out.update({k: int(s.get_value()) for k, s in self.spins.items()})
+        for k, v in self.texts.items():
+            buf = v.get_buffer()
+            out[k] = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+        return out
+
+    def test_keys(self, result):
+        clients = [(cls, self.entries[key].get_text().strip())
+                   for cls, key in ((Torbox, "torbox_key"), (RealDebrid, "realdebrid_key"), (AllDebrid, "alldebrid_key"))]
+
+        def work():
+            parts = []
+            for cls, token in clients:
+                if not token:
+                    continue
+                try:
+                    a = cls(token).account()
+                    parts.append((cls.name, f"{a['plan']}, expires {a['expires'] or '—'}", False))
+                except ApiError as e:
+                    parts.append((cls.name, str(e), True))
+            return parts
+
+        def show(parts, err):
+            if err:
+                result.set_markup(red(err))
+                return
+            result.set_markup("\n".join(
+                (red(f"{n}: {m}") if bad else f"{GLib.markup_escape_text(n)}: {GLib.markup_escape_text(m)}")
+                for n, m, bad in parts) or "No keys entered")
+        result.set_text("Testing…")
+        run_async(work, show)
 
 
 class FeedWatcher:
