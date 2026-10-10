@@ -540,7 +540,8 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
                 "watch_dir": "", "watch_service": "Torbox", "auto_download": False, "download_dir": "~/Downloads",
                 "http_port": 0, "http_token": "", "notified_expiry": {}, "log_level": "actions", "log_max_kb": 1000,
                 "stop_seeding_when_done": False, "auto_download_videos_only": False, "delete_after_download": False,
-                "route_cached": False, "keys_in_keyring": False, "config_version": 2}
+                "route_cached": False, "keys_in_keyring": False, "config_version": 2,
+                "feeds": "", "feed_interval_min": 15, "feed_seen": []}
     assert debrid_applet.load_config() == defaults
     debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b", "notify_done": False})
     assert debrid_applet.column_layout({}, "AllDebrid")["hidden"] == ["peers", "ratio"]
@@ -878,6 +879,27 @@ def test_config_migration():
     assert cfg["columns"]["Torbox"]["hidden"] == ["ul"] and cfg["columns"]["Real-Debrid"]["order"] == ["name"]
     assert da.migrate_config({})["config_version"] == 2
     assert da.migrate_config({"config_version": 2, "columns": {}})["columns"] == {}
+
+
+FEED_XML = """<?xml version="1.0"?><rss version="2.0"><channel><title>t</title>
+<item><title>Show.S01E01.1080p</title><link>magnet:?xt=urn:btih:aaa&amp;dn=x</link><guid>g1</guid></item>
+<item><title>Show.S01E02.720p</title><enclosure url="https://tr/f.torrent" type="application/x-bittorrent"/><guid>g2</guid></item>
+<item><title>Other</title><link>https://site/page</link></item>
+<item><title>NoLink</title><guid>g4</guid></item>
+</channel></rss>"""
+
+
+def test_feeds():
+    import debrid_applet as da
+    items = da.parse_feed(FEED_XML)
+    assert items == [("g1", "Show.S01E01.1080p", "magnet:?xt=urn:btih:aaa&dn=x"),
+                     ("g2", "Show.S01E02.720p", "https://tr/f.torrent"),
+                     ("https://site/page", "Other", "https://site/page")]
+    assert da.parse_feed("not xml") == []
+    feeds = da.parse_feed_lines("https://a/rss | 1080p | Torbox\n# comment\nhttps://b/rss\nbad line without url | x | y\nhttps://c/rss | | AllDebrid")
+    assert feeds == [("https://a/rss", "1080p", "Torbox"), ("https://b/rss", "", ""), ("https://c/rss", "", "AllDebrid")]
+    assert da.feed_matches("Show.S01E01.1080p", "1080p") and da.feed_matches("x", "") and not da.feed_matches("x", "[")  # bad regex never matches
+    assert not da.feed_matches("Show.720p", "1080p")
 
 
 def test_add_label():

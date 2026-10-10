@@ -8,8 +8,10 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+import xml.etree.ElementTree as ET
 from datetime import date, datetime, timezone
 from urllib.parse import parse_qs, quote, urlparse
 
@@ -65,6 +67,7 @@ EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "no
                 "auto_download_videos_only": False, "delete_after_download": False,  # auto-download rules
                 "route_cached": False,  # Add box: send magnets Torbox already has to Torbox
                 "keys_in_keyring": False,  # keep API keys in the system keyring instead of config.json
+                "feeds": "", "feed_interval_min": 15, "feed_seen": [],  # RSS: "url | regex | service" lines
                 "config_version": 2,  # bumped when the layout changes; see migrate_config()
                 "notified_expiry": {}}  # service -> expiry date already warned about
 POLL_FAST, POLL_SLOW = 8, 60  # seconds between polls while something is active / when everything is idle
@@ -181,6 +184,16 @@ def add_one(client, item):
     low = item.lower()
     if low.startswith("magnet:"):
         client.add_magnet(item)
+    elif low.startswith(("http://", "https://")) and low.split("?")[0].endswith(".torrent"):
+        import requests  # a .torrent URL: fetch it, upload the file
+        r = requests.get(item, timeout=20)
+        r.raise_for_status()
+        with tempfile.NamedTemporaryFile(suffix=".torrent", delete=False) as f:
+            f.write(r.content)
+        try:
+            client.add_torrent_file(f.name)
+        finally:
+            os.unlink(f.name)
     elif low.startswith(("http://", "https://")):
         return client.add_link(item)
     elif low.endswith(".torrent"):
@@ -367,6 +380,50 @@ def read_magnets(path):
             if line and not line.startswith("#"):
                 out.append(line.split("\t", 1)[0].strip())
     return out
+
+
+def parse_feed(xml_text):
+    """RSS/Atom items -> (guid, title, link) where link is a magnet, a .torrent URL or the item link."""
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return []
+    out = []
+    for item in root.iter():
+        if item.tag.split("}")[-1] not in ("item", "entry"):
+            continue
+        get = lambda name: next((c.text or "" for c in item if c.tag.split("}")[-1] == name), "").strip()
+        title, link, guid = get("title"), get("link"), get("guid") or get("id")
+        for c in item:
+            if c.tag.split("}")[-1] == "enclosure" and c.get("url"):
+                link = c.get("url").strip()
+            elif c.tag.split("}")[-1] == "link" and c.get("href") and not link:
+                link = c.get("href").strip()
+        if link:
+            out.append((guid or link, title, link))
+    return out
+
+
+def parse_feed_lines(text):
+    """'url | regex | service' per line; regex and service optional; '#' comments."""
+    feeds = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        if parts[0].lower().startswith(("http://", "https://")):
+            feeds.append((parts[0], parts[1] if len(parts) > 1 else "", parts[2] if len(parts) > 2 else ""))
+    return feeds
+
+
+def feed_matches(title, pattern):
+    if not pattern:
+        return True
+    try:
+        return re.search(pattern, title, re.I) is not None
+    except re.error:
+        return False
 
 
 def retryable(message):
@@ -1229,8 +1286,11 @@ class ServiceTab(Gtk.Box):
                     if retryable(str(e)):
                         retry.append(item)
                     continue
-                except OSError as e:  # unreadable .torrent path
-                    errors.append(f"{add_label(item)}: {e.strerror or e}")
+                except OSError as e:  # unreadable .torrent path or a failed .torrent URL fetch
+                    errors.append(f"{add_label(item)}: {getattr(e, 'strerror', None) or e}")
+                    continue
+                except Exception as e:  # requests errors while fetching a .torrent URL
+                    errors.append(f"{add_label(item)}: {e}")
                     continue
                 added.append(add_label(item))
                 if url:
@@ -1665,6 +1725,7 @@ class App:
         menu.show_all()
         self.icon.set_secondary_menu(menu)
         self.watcher = WatchFolder(self)
+        self.feeds = FeedWatcher(self)
         self.api = None
 
         w, h = (self.cfg.get("window") or [1100, 560])[:2]
@@ -1683,6 +1744,7 @@ class App:
             self.open_settings()
         self.refresh()  # every poll schedules the next one (see _schedule)
         self.watcher.start()
+        self.feeds.start()
         self.start_api()
 
     def build_tabs(self):
@@ -1964,6 +2026,19 @@ class App:
         grid.attach(Gtk.Label(label="Local API token", xalign=0), 0, row, 1, 1)
         grid.attach(token, 1, row, 1, 1)
         row += 1
+        feeds_view = Gtk.TextView(wrap_mode=Gtk.WrapMode.NONE, left_margin=6, right_margin=6, top_margin=4, bottom_margin=4)
+        feeds_view.get_buffer().set_text(self.cfg.get("feeds") or "")
+        feeds_scroller = Gtk.ScrolledWindow(shadow_type=Gtk.ShadowType.IN, min_content_height=70)
+        feeds_scroller.add(feeds_view)
+        feeds_label = Gtk.Label(label="RSS feeds, one per line:\nurl | regex | service", xalign=0)
+        grid.attach(feeds_label, 0, row, 1, 1)
+        grid.attach(feeds_scroller, 1, row, 1, 1)
+        row += 1
+        feed_min = Gtk.SpinButton.new_with_range(1, 1440, 1)
+        feed_min.set_value(int(self.cfg.get("feed_interval_min") or 15))
+        grid.attach(Gtk.Label(label="Check feeds every (minutes)", xalign=0), 0, row, 1, 1)
+        grid.attach(feed_min, 1, row, 1, 1)
+        row += 1
         log_level = Gtk.ComboBoxText()
         for key, label in LOG_LEVELS:
             log_level.append(key, label)
@@ -2031,6 +2106,9 @@ class App:
             self.cfg.update({k: c.get_active() for k, c in checks.items()})
             self.cfg["watch_service"] = watch_service.get_active_id() or SERVICES[0]
             self.cfg["http_port"] = int(port.get_value())
+            fb = feeds_view.get_buffer()
+            self.cfg["feeds"] = fb.get_text(fb.get_start_iter(), fb.get_end_iter(), False)
+            self.cfg["feed_interval_min"] = int(feed_min.get_value())
             self.cfg["log_level"] = log_level.get_active_id() or "actions"
             self.cfg["log_max_kb"] = int(log_max.get_value())
             self.apply_log_settings()
@@ -2038,8 +2116,81 @@ class App:
             self.build_tabs()
             self.refresh()
             self.watcher.start()
+            self.feeds.start()
             self.start_api()
         dlg.destroy()
+
+
+class FeedWatcher:
+    """Polls RSS feeds from cfg['feeds'] every cfg['feed_interval_min'] minutes; new matching items are added."""
+
+    def __init__(self, app):
+        self.app = app
+        self._timer = 0
+
+    def start(self):
+        if self._timer:
+            GLib.source_remove(self._timer)
+            self._timer = 0
+        feeds = parse_feed_lines(self.app.cfg.get("feeds"))
+        if not feeds:
+            return
+        minutes = max(1, int(self.app.cfg.get("feed_interval_min") or 15))
+        self._timer = GLib.timeout_add_seconds(minutes * 60, self._tick)
+        GLib.timeout_add_seconds(5, lambda: self.check() and False)  # first pass shortly after start
+
+    def _tick(self):
+        self.check()
+        return True
+
+    def check(self):
+        feeds = parse_feed_lines(self.app.cfg.get("feeds"))
+        seen = set(self.app.cfg.get("feed_seen") or [])
+
+        def work():
+            import requests
+            found, errors = [], []
+            for url, pattern, service in feeds:
+                try:
+                    r = requests.get(url, timeout=20, headers={"User-Agent": "debrid-applet"})
+                    r.raise_for_status()
+                except Exception as e:
+                    errors.append(f"{url}: {e}")
+                    continue
+                for guid, title, link in parse_feed(r.text):
+                    key = f"{url}#{guid}"
+                    if key in seen or not feed_matches(title, pattern):
+                        continue
+                    if not (link.lower().startswith("magnet:") or link.lower().split("?")[0].endswith(".torrent")):
+                        continue  # plain page links can't be added
+                    found.append((key, title, link, service))
+            return found, errors
+
+        def done(res, err):
+            if err:
+                log_event("", f"RSS: {err}", "error")
+                return
+            found, errors = res
+            for e in errors:
+                log_event("", f"RSS: {e}", "error")
+            if not found:
+                log_event("", f"RSS: checked {len(feeds)} feed(s), nothing new", "verbose")
+                return
+            by_tab = {}
+            for key, title, link, service in found:
+                tab = self.app.tab_named(service) or next((t for t in self.app.tabs if t.client and not t.is_merged), None)
+                if tab is None:
+                    continue
+                by_tab.setdefault(tab, []).append(link)
+                seen.add(key)
+                log_event(tab.name, f"RSS: {title}")
+            self.app.cfg["feed_seen"] = list(seen)[-2000:]
+            save_config(self.app.cfg)
+            for tab, links in by_tab.items():
+                tab.add_items(links)
+            notify("RSS", f"{len(found)} new item(s) matched")
+        run_async(work, done)
+        return True
 
 
 class WatchFolder:
