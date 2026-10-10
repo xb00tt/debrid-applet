@@ -92,8 +92,9 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 
   `service` is optional; without it the first configured service is used.
 - **Expiry warning.** One notification per service when premium ends within 7 days.
-- **Activity log.** Clock icon in the toolbar (or `Ctrl+L`): every status message and notification with a timestamp,
-  newest last, with Refresh / Open file / Clear. Kept in `~/.local/share/debrid-applet/activity.log`, trimmed at 1 MB.
+- **Activity log.** Clock icon in the toolbar (or `Ctrl+L`): status messages and notifications with a timestamp,
+  newest last, with Refresh / Open file / Clear. Kept in `~/.local/share/debrid-applet/activity.log`. Settings choose
+  the level (Off / Errors only / Actions and notifications / Verbose with every poll) and the size cap (default 1000 KB).
 - **Subtitles.** Play hands a matching `.srt` / `.ass` / `.vtt` from the same item to mpv, Celluloid, SMPlayer
   or VLC (same file name as the video, or the item's only subtitle).
 
@@ -102,7 +103,7 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 Right-click the tray icon → **Settings…**, or the gear in the toolbar.
 
 - Torbox, Real-Debrid and AllDebrid API keys, with **Test keys** to check them live.
-- Watch folder and which service it uploads to; download folder; local API port.
+- Watch folder and which service it uploads to; download folder; local API port and token; activity log level and size cap.
 - Notify when a torrent is added · Notify when a download finishes on the service (the "finished"
   notification carries an **Open files** button).
 - Watch clipboard for magnet links.

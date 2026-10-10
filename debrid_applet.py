@@ -40,7 +40,10 @@ GLib.set_prgname(APP_ID)
 CONFIG_DIR = os.path.expanduser("~/.config/debrid-applet")
 CONFIG = os.path.join(CONFIG_DIR, "config.json")
 LOG_FILE = os.path.join(os.path.expanduser("~/.local/share/debrid-applet"), "activity.log")
-LOG_MAX = 1_000_000  # bytes; trimmed to the newest ~200 KB when exceeded
+LOG_MAX = 1_000_000  # default bytes; trimmed to the newest fifth when exceeded
+LOG_LEVELS = (("off", "Off"), ("errors", "Errors only"), ("actions", "Actions and notifications"),
+              ("verbose", "Verbose (also every poll)"))
+LOG_SETTINGS = {"level": "actions", "max": LOG_MAX}  # mirrored from the config by App
 EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "notify_added": True, "notify_done": True,
                 "watch_clipboard": True, "columns": {}, "window": [],  # columns: per-service, see column_layout()
                 "remember_filter": True, "filters": {},  # filters: last state-filter choice per service
@@ -49,6 +52,7 @@ EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "no
                 "watch_dir": "", "watch_service": "Torbox",  # .torrent files dropped here get uploaded there
                 "auto_download": False, "download_dir": "~/Downloads",  # finished items -> aria2c/wget into here
                 "http_port": 0, "http_token": "",  # loopback API port (0 = off) and its required token
+                "log_level": "actions", "log_max_kb": 1000,  # activity log verbosity and size cap
                 "notified_expiry": {}}  # service -> expiry date already warned about
 POLL_FAST, POLL_SLOW = 8, 60  # seconds between polls while something is active / when everything is idle
 INVALID_KEY = "Invalid API key"
@@ -214,13 +218,18 @@ def text_button(icon, label, cb):
     return btn
 
 
-def append_log(path, service, message):
-    """One human-readable line per event; the file is trimmed when it grows past LOG_MAX."""
+def should_log(level, setting):
+    rank = {"off": 0, "errors": 1, "actions": 2, "verbose": 3}
+    return {"error": 1, "action": 2, "verbose": 3}[level] <= rank.get(setting, 2)
+
+
+def append_log(path, service, message, max_bytes=LOG_MAX):
+    """One human-readable line per event; the file is trimmed to its newest fifth when it grows past max_bytes."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     try:
-        if os.path.getsize(path) > LOG_MAX:
+        if os.path.getsize(path) > max_bytes:
             with open(path, "rb") as f:
-                f.seek(-200_000, os.SEEK_END)
+                f.seek(-max(1, max_bytes // 5), os.SEEK_END)
                 tail = f.read().split(b"\n", 1)[-1]
             with open(path, "wb") as f:
                 f.write(tail)
@@ -238,9 +247,11 @@ def read_log_tail(path, lines=500):
         return ""
 
 
-def log_event(service, message):
+def log_event(service, message, level="action"):
+    if not should_log(level, LOG_SETTINGS["level"]):
+        return
     try:
-        append_log(LOG_FILE, service, message)
+        append_log(LOG_FILE, service, message, LOG_SETTINGS["max"])
     except OSError:
         pass
 
@@ -661,7 +672,7 @@ class ServiceTab(Gtk.Box):
         """Status line message that polls leave alone for a few seconds. Errors stay in the tooltip."""
         self.status.set_markup(red(msg) if error else GLib.markup_escape_text(msg))
         self._hold_until = time.monotonic() + STATUS_HOLD
-        log_event(self.name, ("ERROR " if error else "") + msg)
+        log_event(self.name, ("ERROR " if error else "") + msg, "error" if error else "action")
         if error and (not self.errors or self.errors[-1][1] != msg):
             self.errors = (self.errors + [(time.strftime("%H:%M:%S"), msg)])[-8:]
             self.status.set_tooltip_text("Recent errors:\n" + "\n".join(f"{t}  {m}" for t, m in self.errors))
@@ -684,7 +695,7 @@ class ServiceTab(Gtk.Box):
     def render(self, account, torrents, error):
         if error:
             self.account_label.set_markup(red(error))
-            self.say(error, error=True)
+            self.say(error, error=True)  # also logged as an error
             if error == INVALID_KEY:
                 self.app.open_settings_once()
             return
@@ -704,6 +715,7 @@ class ServiceTab(Gtk.Box):
         self.checked &= ids
         self._fill()
         self.active = sum(1 for t in torrents if not t["done"])
+        log_event(self.name, f"Poll: {len(torrents)} items, {self.active} active", "verbose")
         if time.monotonic() >= self._hold_until:
             self.status.set_text(f"Updated {time.strftime('%H:%M:%S')} · {self.active} active")
 
@@ -1231,6 +1243,7 @@ class App:
         Gtk.IconTheme.get_default().append_search_path(HERE)  # debrid-applet.svg next to this file
         Gtk.Window.set_default_icon_name(APP_ID)
         self.cfg = load_config()
+        self.apply_log_settings()
         self.lock = threading.Lock()
         self._refresh_again = False
         self._timer = 0
@@ -1287,6 +1300,10 @@ class App:
 
     def current_tab(self):
         return self.tabs[self.notebook.get_current_page()]
+
+    def apply_log_settings(self):
+        LOG_SETTINGS["level"] = self.cfg.get("log_level") or "actions"
+        LOG_SETTINGS["max"] = max(50, int(self.cfg.get("log_max_kb") or 1000)) * 1000
 
     def tab_named(self, name):
         return next((t for t in self.tabs if t.name == name), None)
@@ -1504,6 +1521,18 @@ class App:
         grid.attach(Gtk.Label(label="Local API token", xalign=0), 0, row, 1, 1)
         grid.attach(token, 1, row, 1, 1)
         row += 1
+        log_level = Gtk.ComboBoxText()
+        for key, label in LOG_LEVELS:
+            log_level.append(key, label)
+        log_level.set_active_id(self.cfg.get("log_level") or "actions")
+        grid.attach(Gtk.Label(label="Activity log", xalign=0), 0, row, 1, 1)
+        grid.attach(log_level, 1, row, 1, 1)
+        row += 1
+        log_max = Gtk.SpinButton.new_with_range(50, 100000, 50)
+        log_max.set_value(int(self.cfg.get("log_max_kb") or 1000))
+        grid.attach(Gtk.Label(label="Activity log size limit (KB)", xalign=0), 0, row, 1, 1)
+        grid.attach(log_max, 1, row, 1, 1)
+        row += 1
         for key, label in (("notify_added", "Notify when torrent added"),
                            ("notify_done", "Notify when download finishes on service"),
                            ("watch_clipboard", "Watch clipboard for magnet links"),
@@ -1552,6 +1581,9 @@ class App:
             self.cfg.update({k: c.get_active() for k, c in checks.items()})
             self.cfg["watch_service"] = watch_service.get_active_id() or SERVICES[0]
             self.cfg["http_port"] = int(port.get_value())
+            self.cfg["log_level"] = log_level.get_active_id() or "actions"
+            self.cfg["log_max_kb"] = int(log_max.get_value())
+            self.apply_log_settings()
             save_config(self.cfg)
             self.build_tabs()
             self.refresh()

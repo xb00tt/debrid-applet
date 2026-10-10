@@ -515,7 +515,7 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
                 "watch_clipboard": True, "columns": {}, "window": [], "remember_filter": True, "filters": {},
                 "dblclick_play": False, "dblclick_asked": False,
                 "watch_dir": "", "watch_service": "Torbox", "auto_download": False, "download_dir": "~/Downloads",
-                "http_port": 0, "http_token": "", "notified_expiry": {}}
+                "http_port": 0, "http_token": "", "notified_expiry": {}, "log_level": "actions", "log_max_kb": 1000}
     assert debrid_applet.load_config() == defaults
     debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b", "notify_done": False})
     assert debrid_applet.column_layout({}, "AllDebrid")["hidden"] == ["peers", "ratio"]
@@ -731,6 +731,16 @@ def test_activity_log(path="/tmp/debrid-test-activity.log"):
     assert len(data) < 300_000 and data.endswith("after rotation\n")
     assert da.read_log_tail(path, 1).strip().endswith("after rotation")
     assert da.read_log_tail("/nonexistent/x.log", 5) == ""
+
+
+def test_log_levels():
+    import debrid_applet as da
+    s = da.should_log
+    assert not s("error", "off") and not s("action", "off") and not s("verbose", "off")
+    assert s("error", "errors") and not s("action", "errors") and not s("verbose", "errors")
+    assert s("error", "actions") and s("action", "actions") and not s("verbose", "actions")
+    assert s("error", "verbose") and s("action", "verbose") and s("verbose", "verbose")
+    assert s("action", "garbage")  # unknown setting behaves like the default
 
 
 def test_add_label():
