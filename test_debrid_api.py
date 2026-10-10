@@ -2,10 +2,19 @@
 import json
 import requests
 
-from debrid_api import ApiError, RealDebrid, Torbox, human_size, magnet_hash
+from debrid_api import AllDebrid, ApiError, RealDebrid, Torbox, human_size, magnet_hash
 
 RD = "https://api.real-debrid.com/rest/1.0"
 TB = "https://api.torbox.app/v1/api"
+AD = "https://api.alldebrid.com"
+
+
+def ad_ok(data):
+    return FakeResp(200, {"status": "success", "data": data})
+
+
+def ad_err(code, message="bad"):
+    return FakeResp(200, {"status": "error", "error": {"code": code, "message": message}})
 
 
 def ok(data):
@@ -210,6 +219,91 @@ def test_network_error():
         assert str(e).startswith("Network error:")
 
 
+def test_ad_account():
+    s = FakeSession(ad_ok({"user": {"isPremium": True, "isTrial": True, "premiumUntil": 1760745600, "fidelityPoints": 12}}))
+    assert AllDebrid("t", s).account() == {"plan": "trial", "expires": "2025-10-18", "extra": "12 points"}
+    assert s.calls[0][:2] == ("GET", AD + "/v4/user")
+    assert s.calls[0][2]["headers"] if "headers" in s.calls[0][2] else s.headers["Authorization"] == "Bearer t"
+    assert AllDebrid("t", FakeSession(ad_ok({"user": {"isPremium": False, "premiumUntil": 0}}))).account()["plan"] == "free"
+
+
+def test_ad_torrents_normalize():
+    s = FakeSession(ad_ok({"magnets": [
+        {"id": 11, "filename": "a.iso", "size": 1000, "status": "Downloading", "statusCode": 1, "downloaded": 250,
+         "uploaded": 0, "seeders": 7, "downloadSpeed": 500, "uploadSpeed": 20, "uploadDate": 1760000000, "completionDate": 0},
+        {"id": 12, "filename": "b.mkv", "size": 400, "status": "Ready", "statusCode": 4, "uploadDate": 1760000000, "completionDate": 1760003600},
+        {"id": 13, "filename": "c", "size": 5, "status": "File too big", "statusCode": 8},
+        {"id": 14, "filename": "d", "size": 5, "status": "In Queue", "statusCode": 0},
+    ]}))
+    out = AllDebrid("t", s).torrents()
+    assert s.calls[0][:2] == ("POST", AD + "/v4.1/magnet/status")
+    assert out[0] == {"id": "11", "name": "a.iso", "progress": 25.0, "state": "Downloading", "done": False, "size": 1000,
+                      "seeds": 7, "speed": 500, "kind": "torrent", "up_speed": 20, "peers": None, "ratio": None,
+                      "added": "2025-10-09T08:53:20Z", "finished": "", "hash": ""}
+    assert out[1]["done"] is True and out[1]["progress"] == 100.0 and out[1]["finished"] == "2025-10-09T09:53:20Z"
+    assert out[2]["state"] == "error: File too big" and out[2]["done"] is False
+    assert out[3]["state"] == "In Queue"
+
+
+def test_ad_add_magnet_and_file(tmp_path="/tmp/debrid-test.torrent"):
+    s = FakeSession(ad_ok({"magnets": [{"magnet": "m", "id": 5, "ready": True}]}))
+    AllDebrid("t", s).add_magnet("magnet:?xt=urn:btih:abc")
+    assert s.calls[0][:2] == ("POST", AD + "/v4/magnet/upload")
+    assert s.calls[0][2]["data"] == {"magnets[]": ["magnet:?xt=urn:btih:abc"]}
+    try:
+        AllDebrid("t", FakeSession(ad_ok({"magnets": [{"magnet": "m", "error": {"code": "MAGNET_INVALID_URI", "message": "Invalid magnet"}}]}))).add_magnet("x")
+        assert False
+    except ApiError as e:
+        assert str(e) == "Invalid magnet"
+    with open(tmp_path, "wb") as f:
+        f.write(b"d8:announce0:e")
+    s = FakeSession(ad_ok({"files": [{"file": "debrid-test.torrent", "id": 6}]}))
+    AllDebrid("t", s).add_torrent_file(tmp_path)
+    assert s.calls[0][:2] == ("POST", AD + "/v4/magnet/upload/file")
+    name, fileobj, ctype = s.calls[0][2]["files"]["files[]"]
+    assert name == "debrid-test.torrent" and ctype == "application/x-bittorrent" and fileobj.closed
+
+
+def test_ad_delete_and_links():
+    s = FakeSession(ad_ok({"message": "deleted"}))
+    AllDebrid("t", s).delete("11")
+    assert s.calls[0][:2] == ("POST", AD + "/v4/magnet/delete") and s.calls[0][2]["data"] == {"id": 11}
+    s = FakeSession(
+        ad_ok({"magnets": [{"id": "11", "files": [
+            {"n": "Season", "e": [{"n": "e1.mkv", "s": 100, "l": "https://alldebrid.com/f/1"}]},
+            {"n": "readme.txt", "s": 5, "l": "https://alldebrid.com/f/2"}]}]}),
+        ad_ok({"link": "https://cdn/e1", "filename": "e1.mkv", "filesize": 100}),
+        ad_ok({"link": "https://cdn/readme", "filename": "readme.txt", "filesize": 5}),
+    )
+    out = AllDebrid("t", s).links("11")
+    assert out == [{"name": "Season/e1.mkv", "url": "https://cdn/e1", "size": 100},
+                   {"name": "readme.txt", "url": "https://cdn/readme", "size": 5}]
+    assert s.calls[0][:2] == ("POST", AD + "/v4/magnet/files") and s.calls[0][2]["data"] == {"id[]": [11]}
+    assert s.calls[1][:2] == ("POST", AD + "/v4/link/unlock") and s.calls[1][2]["data"] == {"link": "https://alldebrid.com/f/1"}
+    assert AllDebrid("t", FakeSession(ad_ok({"magnets": [{"id": "99", "error": {"code": "MAGNET_INVALID_ID", "message": "nope"}}]}))).links("99") == []
+
+
+def test_ad_add_link_and_errors():
+    s = FakeSession(ad_ok({"link": "https://cdn/f", "filename": "f.bin"}))
+    assert AllDebrid("t", s).add_link("https://hoster/x") == "https://cdn/f"
+    for code in ("AUTH_BAD_APIKEY", "AUTH_MISSING_APIKEY"):
+        try:
+            AllDebrid("t", FakeSession(ad_err(code))).account()
+            assert False
+        except ApiError as e:
+            assert str(e) == "Invalid API key"
+    try:
+        AllDebrid("t", FakeSession(ad_err("MAGNET_TOO_MANY_ACTIVE", "Too many active magnets"))).torrents()
+        assert False
+    except ApiError as e:
+        assert str(e) == "Too many active magnets"
+    try:
+        AllDebrid("t", FakeSession(FakeResp(400, {"status": "error", "error": {"code": "LINK_HOST_NOT_SUPPORTED", "message": "Host not supported"}}))).add_link("x")
+        assert False
+    except ApiError as e:
+        assert str(e) == "Host not supported"
+
+
 def test_tb_account():
     s = FakeSession(ok({"plan": 2, "premium_expires_at": "2027-05-01T00:00:00Z", "total_downloaded": 191}))
     assert Torbox("t", s).account() == {"plan": "Pro", "expires": "2027-05-01", "extra": "191 downloads"}
@@ -409,10 +503,11 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
     shutil.rmtree(tmp_dir, ignore_errors=True)
     debrid_applet.CONFIG_DIR = tmp_dir
     debrid_applet.CONFIG = os.path.join(tmp_dir, "config.json")
-    defaults = {"torbox_key": "", "realdebrid_key": "", "notify_added": True, "notify_done": True,
+    defaults = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "notify_added": True, "notify_done": True,
                 "watch_clipboard": True, "columns": {}, "window": [], "remember_filter": True, "filters": {}}
     assert debrid_applet.load_config() == defaults
     debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b", "notify_done": False})
+    assert debrid_applet.column_layout({}, "AllDebrid")["hidden"] == ["peers", "ratio"]
     assert stat.S_IMODE(os.stat(debrid_applet.CONFIG).st_mode) == 0o600
     assert stat.S_IMODE(os.stat(tmp_dir).st_mode) == 0o700
     assert debrid_applet.load_config() == {**defaults, "torbox_key": "a", "realdebrid_key": "b", "notify_done": False}
@@ -471,6 +566,7 @@ def test_state_kind_buckets():
     k = debrid_applet.state_kind
     assert k("downloading") == "active" and k("metaDL") == "active" and k("queued") == "active"
     assert k("waiting_files_selection") == "active" and k("magnet_conversion") == "active"
+    assert k("In Queue") == "active" and k("Ready") == "done" and k("error: File too big") == "error"
     assert k("adding…") == "active"
     assert k("downloaded") == "done" and k("cached") == "done" and k("web: completed") == "done"
     assert k("uploading (no peers)") == "seed"

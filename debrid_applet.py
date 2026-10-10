@@ -22,7 +22,7 @@ from gi.repository import Gdk, Gio, GLib, Gtk, Notify, Pango, XApp  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from debrid_api import ApiError, RealDebrid, Torbox, human_size, magnet_hash  # noqa: E402
+from debrid_api import AllDebrid, ApiError, RealDebrid, Torbox, human_size, magnet_hash  # noqa: E402
 
 APP_ID = "debrid-applet"  # WM_CLASS, icon name and .desktop basename all match
 DBUS_ID = "io.github.xb00tt.DebridApplet"  # single-instance guard
@@ -32,7 +32,7 @@ GLib.set_prgname(APP_ID)
 
 CONFIG_DIR = os.path.expanduser("~/.config/debrid-applet")
 CONFIG = os.path.join(CONFIG_DIR, "config.json")
-EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "notify_added": True, "notify_done": True,
+EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "notify_added": True, "notify_done": True,
                 "watch_clipboard": True, "columns": {}, "window": [],  # columns: per-service, see column_layout()
                 "remember_filter": True, "filters": {}}  # filters: last state-filter choice per service
 POLL_FAST, POLL_SLOW = 8, 60  # seconds between polls while something is active / when everything is idle
@@ -266,7 +266,7 @@ treeview.view { font-feature-settings: 'tnum'; }
 """
 
 
-DEFAULT_HIDDEN = {"Real-Debrid": ["ul", "peers", "ratio"]}  # columns that service never fills
+DEFAULT_HIDDEN = {"Real-Debrid": ["ul", "peers", "ratio"], "AllDebrid": ["peers", "ratio"]}  # never filled by that service
 
 
 def column_layout(columns, name):
@@ -291,7 +291,7 @@ def state_kind(state):
         return "done"
     if "upload" in s or "seed" in s:
         return "seed"
-    if any(w in s for w in ("download", "metadl", "checking", "queued", "magnet", "waiting", "compressing", "adding")):
+    if any(w in s for w in ("download", "metadl", "checking", "queue", "magnet", "waiting", "compressing", "adding")):
         return "active"
     return "done"  # store column of the checkbox; seconds an action message stays before polls overwrite it
 
@@ -1057,6 +1057,7 @@ class App:
             ServiceTab("Torbox", Torbox(self.cfg["torbox_key"]) if self.cfg["torbox_key"] else None, self),
             ServiceTab("Real-Debrid",
                        RealDebrid(self.cfg["realdebrid_key"]) if self.cfg["realdebrid_key"] else None, self),
+            ServiceTab("AllDebrid", AllDebrid(self.cfg["alldebrid_key"]) if self.cfg["alldebrid_key"] else None, self),
         ]
         for tab in self.tabs:
             self.notebook.append_page(tab, Gtk.Label(label=tab.name))
@@ -1186,7 +1187,8 @@ class App:
         grid = Gtk.Grid(row_spacing=6, column_spacing=6, margin=12)
         entries = {}
         for i, (key, label) in enumerate((("torbox_key", "Torbox API key"),
-                                          ("realdebrid_key", "Real-Debrid API key"))):
+                                          ("realdebrid_key", "Real-Debrid API key"),
+                                          ("alldebrid_key", "AllDebrid API key"))):
             entry = Gtk.Entry(text=self.cfg[key], visibility=False, width_chars=48)
             grid.attach(Gtk.Label(label=label, xalign=0), 0, i, 1, 1)
             grid.attach(entry, 1, i, 1, 1)
@@ -1195,18 +1197,18 @@ class App:
         for i, (key, label) in enumerate((("notify_added", "Notify when torrent added"),
                                           ("notify_done", "Notify when download finishes on service"),
                                           ("watch_clipboard", "Watch clipboard for magnet links"),
-                                          ("remember_filter", "Remember the state filter between runs")), start=2):
+                                          ("remember_filter", "Remember the state filter between runs")), start=3):
             check = Gtk.CheckButton(label=label, active=bool(self.cfg[key]))
             grid.attach(check, 0, i, 2, 1)
             checks[key] = check
         result = Gtk.Label(xalign=0, wrap=True)
-        grid.attach(result, 0, 6, 2, 1)
+        grid.attach(result, 0, 7, 2, 1)
         dlg.get_content_area().add(grid)
         dlg.show_all()
 
         def test_keys():
             clients = [(cls, entries[key].get_text().strip())
-                       for cls, key in ((Torbox, "torbox_key"), (RealDebrid, "realdebrid_key"))]
+                       for cls, key in ((Torbox, "torbox_key"), (RealDebrid, "realdebrid_key"), (AllDebrid, "alldebrid_key"))]
 
             def work():
                 parts = []

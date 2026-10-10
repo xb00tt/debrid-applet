@@ -2,6 +2,7 @@
 import base64
 import os
 import re
+from datetime import datetime, timezone
 
 import requests
 
@@ -59,7 +60,7 @@ class _Client:
         if r.status_code == 403:
             # Torbox uses 403 for bad tokens; Real-Debrid uses it for permission errors with a message.
             body = _json_or_none(r)
-            if body is None or body.get("error") in TORBOX_AUTH_ERRORS:
+            if body is None or _is_auth_error(body):
                 raise ApiError(INVALID_KEY)
             raise ApiError(_error_message(r))
         if r.status_code == 429:
@@ -85,6 +86,21 @@ def _direct_url(u):
     return url
 
 
+def _iso_from_ts(ts):
+    """Unix seconds -> '2025-10-09T08:53:20Z'; '' for 0 / missing."""
+    try:
+        ts = int(ts or 0)
+    except (TypeError, ValueError):
+        return ""
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if ts > 0 else ""
+
+
+def _is_auth_error(body):
+    err = body.get("error")
+    code = err.get("code", "") if isinstance(err, dict) else err
+    return code in TORBOX_AUTH_ERRORS or str(code or "").startswith("AUTH_")
+
+
 def _json_or_none(r):
     try:
         body = r.json()
@@ -97,6 +113,8 @@ def _error_message(r):
     """Prefer the service's own message (Torbox 'detail', Real-Debrid 'error') over raw body."""
     body = _json_or_none(r) or {}
     msg = body.get("detail") or body.get("error")
+    if isinstance(msg, dict):  # AllDebrid: {"error": {"code", "message"}}
+        msg = msg.get("message") or msg.get("code")
     return str(msg) if msg else f"HTTP {r.status_code}: {r.text[:200]}"
 
 
@@ -289,3 +307,105 @@ class Torbox(_Client):
         else:
             found = set()
         return {h for h in hashes if h in found}
+
+
+def _flatten_files(nodes, prefix=""):
+    """AllDebrid folder tree ({n, e} folders, {n, s, l} files) -> (path, size, link)."""
+    for node in nodes or []:
+        name = f"{prefix}{node.get('n', '')}"
+        if "e" in node:
+            yield from _flatten_files(node["e"], name + "/")
+        elif node.get("l"):
+            yield name, int(node.get("s") or 0), node["l"]
+
+
+class AllDebrid(_Client):
+    BASE = "https://api.alldebrid.com"
+    name = "AllDebrid"
+
+    def _call(self, method, path, **kw):
+        """Envelope: {"status": "success", "data": ...} or {"status": "error", "error": {"code", "message"}}."""
+        body = _body(self._req(method, path, **kw), self.name)
+        if not isinstance(body, dict):
+            raise ApiError(f"Unexpected response from {self.name}")
+        if body.get("status") != "success":
+            if _is_auth_error(body):
+                raise ApiError(INVALID_KEY)
+            err = body.get("error") or {}
+            raise ApiError((err.get("message") or err.get("code") or "AllDebrid error") if isinstance(err, dict) else str(err))
+        return body.get("data") or {}
+
+    @staticmethod
+    def _item_error(item):
+        err = item.get("error") if isinstance(item, dict) else None
+        if err:
+            raise ApiError(err.get("message") or err.get("code") or "AllDebrid error")
+
+    def account(self):
+        u = self._call("GET", "/v4/user").get("user") or {}
+        plan = "trial" if u.get("isTrial") else "premium" if u.get("isPremium") else "free"
+        return {"plan": plan, "expires": _iso_from_ts(u.get("premiumUntil"))[:10],
+                "extra": f"{u.get('fidelityPoints', 0)} points"}
+
+    def torrents(self):
+        out = []
+        for m in self._call("POST", "/v4.1/magnet/status").get("magnets") or []:
+            code = int(m.get("statusCode") or 0)
+            size = int(m.get("size") or 0)
+            done = code == 4
+            progress = 100.0 if done else (100.0 * int(m.get("downloaded") or 0) / size if size else 0.0)
+            status = m.get("status") or ""
+            out.append({
+                "id": str(m["id"]),
+                "name": m.get("filename", ""),
+                "progress": min(100.0, progress),
+                "state": f"error: {status}" if code >= 5 else status,
+                "done": done,
+                "size": size,
+                "seeds": int(m.get("seeders") or 0),
+                "speed": int(m.get("downloadSpeed") or 0),
+                "kind": "torrent",
+                "up_speed": int(m.get("uploadSpeed") or 0),
+                "peers": None,
+                "ratio": None,
+                "added": _iso_from_ts(m.get("uploadDate")),
+                "finished": _iso_from_ts(m.get("completionDate")),
+                "hash": "",  # not part of the v4.1 status object
+            })
+        return out
+
+    def add_magnet(self, magnet):
+        items = self._call("POST", "/v4/magnet/upload", data={"magnets[]": [magnet]}).get("magnets") or []
+        for item in items:
+            self._item_error(item)
+
+    def add_torrent_file(self, path):
+        with open(path, "rb") as f:
+            data = self._call("POST", "/v4/magnet/upload/file",
+                              files={"files[]": (os.path.basename(path), f, "application/x-bittorrent")})
+        for item in data.get("files") or []:
+            self._item_error(item)
+
+    def delete(self, tid, kind="torrent"):
+        self._call("POST", "/v4/magnet/delete", data={"id": int(tid)})
+
+    def links(self, tid, kind="torrent"):
+        magnets = self._call("POST", "/v4/magnet/files", data={"id[]": [int(tid)]}).get("magnets") or []
+        item = magnets[0] if magnets else {}
+        if not isinstance(item, dict) or item.get("error"):
+            return []
+        out = []
+        for name, size, link in _flatten_files(item.get("files")):
+            try:
+                u = self._call("POST", "/v4/link/unlock", data={"link": link})
+            except ApiError as e:
+                out.append({"name": f"Failed: {e}", "url": None})
+                break
+            out.append({"name": name, "url": u.get("link"), "size": int(u.get("filesize") or size)})
+        return out
+
+    def add_link(self, url):
+        direct = self._call("POST", "/v4/link/unlock", data={"link": url}).get("link")
+        if not direct:
+            raise ApiError("No direct link returned")
+        return direct
