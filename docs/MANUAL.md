@@ -97,6 +97,13 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 
   Without `--service`, cached-on-Torbox routing applies; `--service` naming a service without a key adds nothing and
   exits 1. Bind `--toggle` to a Cinnamon keyboard shortcut for a global hotkey.
+- **Updates.** Once a day (and 60 s after start) the applet asks GitHub for the latest release and, when it is newer,
+  shows a notification with Update / Release notes / Skip this version. Right-click the tray icon → **Check for
+  updates…** (or the button in About) checks at once. Update downloads the release, verifies it against the checksum
+  GitHub publishes, and installs it: the `.deb` through `apt-get` behind one password prompt, a `./install.sh` copy by
+  replacing its files, a git checkout only tells you to `git pull`. Then it offers to restart. Turn the daily check
+  off under Settings → Advanced. Nothing is ever installed without your click; failed installs leave the file in
+  `~/.local/share/debrid-applet/updates/` and offer the `sudo apt install` line to copy.
 - **Send to.** Right-click → Send to → another service re-adds the ticked items there by magnet (not from AllDebrid, which gives no hashes).
 - **Export / import.** The ⋮ menu in the toolbar exports every item's magnet (`magnet<TAB>name` per line) to a file,
   imports such a file (or any file with one magnet or link per line), or copies all magnets to the clipboard.
@@ -128,7 +135,7 @@ Right-click the tray icon → **Settings…**, or the gear in the toolbar. Four 
   default added-within window, double-click plays videos, custom play command.
 - **Automation**: watch folder and its target service; RSS feeds and their interval; what happens when an item
   finishes (auto-download, videos only, delete afterwards, download folder; Torbox stop seeding).
-- **Advanced**: local API port and token; activity log level and size cap.
+- **Advanced**: local API port and token; daily update check; activity log level and size cap.
 
 Notifications, clipboard watcher and remembered filter are on by default; everything else is off until you turn it on.
 

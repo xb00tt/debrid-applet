@@ -15,6 +15,7 @@ mangles `[` and `|` on some keyboard layouts, so use the clipboard or bracket-fr
 
 - `debrid_api.py`: the three service clients behind one interface, plus helpers (`magnet_hash`, `human_size`).
 - `debrid_local_api.py`: the loopback HTTP API.
+- `debrid_update.py`: update check and self-update (GitHub releases API, verified download, apt / per-user install).
 - `debrid_applet.py`: everything GTK: tabs, footer, settings form, watchers, notifications, command line.
 - `test_debrid_api.py`: the offline suite; run it directly, no test runner needed.
 - `install.sh`, `debrid-applet.desktop`, `debrid-applet.svg`: per-user install.
@@ -37,6 +38,12 @@ mangles `[` and `|` on some keyboard layouts, so use the clipboard or bracket-fr
 Bump `VERSION` in `debrid_applet.py`, tag `vX.Y.Z` and push the tag. The release workflow runs the tests, refuses a
 tag that doesn't match `VERSION`, builds the `.deb` (via `packaging/build-deb.sh`) and a source tarball, and publishes
 a GitHub release with generated notes. `packaging/build-deb.sh` also works locally on any Debian-based box.
+
+The applet's update check reads `releases/latest`: keep the tag `vX.Y.Z` and the asset names
+`debrid-applet_X.Y.Z_all.deb` and `debrid-applet-X.Y.Z.tar.gz` (both produced by the workflow); GitHub computes the
+`digest` the applet verifies. Drafts and prereleases are invisible to it. A per-user install updates from the tarball,
+so `debrid_update.FILES` and the copy list in `install.sh` must stay the same five files.
+
 
 ## Adding a service
 
