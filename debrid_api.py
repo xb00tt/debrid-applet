@@ -249,6 +249,7 @@ class Torbox(_Client):
                     continue
                 state = t.get("download_state") or ""
                 done = bool(t.get("download_finished")) and bool(t.get("download_present"))
+                moving = t.get("active") is not False  # Torbox keeps the last speeds on stopped / finished items
                 out.append({
                     "id": str(t["id"]),
                     "name": t.get("name", ""),
@@ -257,9 +258,9 @@ class Torbox(_Client):
                     "done": done,
                     "size": _num(t.get("size")),
                     "seeds": _num(t.get("seeds")),
-                    "speed": _num(t.get("download_speed")),
+                    "speed": _num(t.get("download_speed")) if moving else 0,
                     "kind": kind,
-                    "up_speed": _num(t.get("upload_speed")),
+                    "up_speed": _num(t.get("upload_speed")) if moving else 0,
                     "peers": _num(t.get("peers")),
                     "ratio": _num(t.get("ratio"), float),
                     "added": t.get("created_at") or "",

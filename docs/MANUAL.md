@@ -4,8 +4,9 @@ Everything the applet does, in detail. For installing and the basics see the [RE
 
 ## Tray icon
 
-- Left-click: show / hide the window. Right-click: Refresh, Settings…, Quit.
-- Label next to the icon (e.g. `32↓`) is how many items across all services are still being worked on (failed items are not counted); hover for details.
+- Left-click: show / hide the window. Right-click: Refresh, Settings…, About…, Quit. About… (also in the toolbar ⋮
+  menu) shows the version, licence and the project page.
+- Label next to the icon (e.g. `32↓`) is how many items across all services are still downloading (what the Active filter shows); hover for details.
 - Only one instance runs; launching the applet again just raises the window.
 
 ## Adding things

@@ -116,7 +116,8 @@ def test_ad_active_only():
 
 def test_merge_active():
     import debrid_applet as da
-    full = [{"id": "1", "done": False, "name": "a"}, {"id": "2", "done": True, "name": "b"}, {"id": "3", "done": False, "name": "c"}]
+    full = [{"id": "1", "done": False, "name": "a", "state": "downloading"}, {"id": "2", "done": True, "name": "b"},
+            {"id": "3", "done": False, "name": "c", "state": "downloading"}]
     merged, need_full = da.merge_active(full, [{"id": "1", "done": False, "name": "a2"}, {"id": "3", "done": False, "name": "c"}])
     assert [t["name"] for t in merged] == ["a2", "b", "c"] and not need_full
     merged, need_full = da.merge_active(full, [{"id": "1", "done": False, "name": "a"}])  # 3 left the active set
@@ -390,6 +391,13 @@ def test_odd_rows_do_not_sink_the_poll():
     assert [t["id"] for t in AllDebrid("t", s).torrents()] == ["5"]
 
 
+def test_tb_inactive_items_report_no_speed():
+    s = FakeSession(ok([{"id": 1, "name": "x", "progress": 1, "download_state": "stopped seeding", "active": False,
+                         "download_finished": True, "download_present": True, "download_speed": 1190345, "upload_speed": 1141680}]), ok([]))
+    t = Torbox("t", s).torrents()[0]
+    assert t["speed"] == 0 and t["up_speed"] == 0 and t["done"] is True  # Torbox keeps stale speeds on stopped items
+
+
 def test_tb_done_requires_present():
     s = FakeSession(ok([{"id": 1, "name": "x", "progress": 1, "download_state": "completed",
                          "download_finished": True, "download_present": False}]), ok([]))
@@ -652,6 +660,9 @@ def test_state_kind_buckets():
     assert k("select failed: infringing_file") == "error"
     assert debrid_applet.is_active({"done": False, "state": "downloading"}) and not debrid_applet.is_active({"done": True})
     assert not debrid_applet.is_active({"done": False, "state": "error: File too big"})  # never finishes, needs no fast polls
+    assert not debrid_applet.is_active({"done": False, "state": "expired"})  # Torbox removed the files: nothing moving
+    assert not debrid_applet.is_active({"done": False, "state": "stalled (no seeds)"})  # same rule as the Active dropdown
+    assert k("stopped seeding") == "done" and k("expired") == "done"
     assert k("") == "done"
     assert set(debrid_applet.PALETTE) == {"active", "done", "seed", "warn", "error"}
 
@@ -844,7 +855,7 @@ def test_footer_helpers():
     assert da.expiry_text(date.today().isoformat()) == f"expires {date.today().isoformat()} (today)"
     past = (date.today() - timedelta(days=2)).isoformat()
     assert da.expiry_text(past) == f"expired {past}"
-    rows = [{"speed": 1000, "up_speed": 200, "done": False, "size": 10}, {"speed": 0, "up_speed": None, "done": True, "size": 20}]
+    rows = [{"speed": 1000, "up_speed": 200, "done": False, "size": 10, "state": "downloading"}, {"speed": 0, "up_speed": None, "done": True, "size": 20}]
     assert da.totals_text(rows, shown=2, ticked=0) == "⬇ 1000 B/s · ⬆ 200 B/s · 1 active · 2 items · 30 B"
     assert da.totals_text(rows, shown=1, ticked=1) == "⬇ 1000 B/s · ⬆ 200 B/s · 1 active · 2 items · 30 B · showing 1 · 1 ticked"
     assert da.totals_text([], shown=0, ticked=0) == "0 items"

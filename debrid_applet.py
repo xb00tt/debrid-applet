@@ -37,6 +37,7 @@ from debrid_local_api import LocalApi  # noqa: E402
 VERSION = "1.0.2"
 APP_ID = "debrid-applet"  # WM_CLASS, icon name and .desktop basename all match
 DBUS_ID = "io.github.xb00tt.DebridApplet"  # single-instance guard
+HOMEPAGE = "https://github.com/xb00tt/debrid-applet"
 PLAYERS = ("mpv", "vlc", "celluloid", "smplayer", "totem")
 SUB_FLAG = {"mpv": "--sub-file={}", "celluloid": "--mpv-sub-file={}", "smplayer": "-sub {}", "vlc": "--sub-file={}"}
 RESUME_FLAG = {"mpv": "--save-position-on-quit", "celluloid": "--mpv-save-position-on-quit"}  # resume where you stopped
@@ -763,6 +764,8 @@ def state_kind(state):
         return "warn"
     if any(w in s for w in ("downloaded", "completed", "cached")):
         return "done"
+    if "stopped" in s:  # Torbox "stopped seeding": finished, nothing moving
+        return "done"
     if "upload" in s or "seed" in s:
         return "seed"
     if any(w in s for w in ("download", "metadl", "checking", "queue", "magnet", "waiting", "compressing", "adding")):
@@ -771,8 +774,9 @@ def state_kind(state):
 
 
 def is_active(t):
-    """Still being worked on: not finished and not failed (a failed item never finishes, but needs no fast polls)."""
-    return not t["done"] and state_kind(t.get("state", "")) != "error"
+    """Exactly what the Active dropdown shows: the footer count, the tray badge and the fast poll cadence follow it,
+    so an expired, stalled or failed item (not finished, but not moving) never reads as active."""
+    return not t["done"] and state_kind(t.get("state", "")) == "active"
 
 
 class ServiceTab(Gtk.Box):
@@ -812,7 +816,7 @@ class ServiceTab(Gtk.Box):
         more.set_relief(Gtk.ReliefStyle.NONE)
         more_menu = Gtk.Menu()
         for label, cb in (("Export magnets…", self.on_export), ("Import magnets or links…", self.on_import),
-                          ("Copy all magnets", self.on_copy_all_magnets)):
+                          ("Copy all magnets", self.on_copy_all_magnets), ("About…", app.open_about)):
             item = Gtk.MenuItem(label=label)
             item.connect("activate", lambda _i, cb=cb: cb())
             more_menu.append(item)
@@ -1856,7 +1860,7 @@ class App:
         self.icon.set_tooltip_text("Debrid")
         self.icon.connect("activate", self.toggle_window)
         menu = Gtk.Menu()
-        for label, cb in (("Refresh", self.refresh), ("Settings…", self.open_settings),
+        for label, cb in (("Refresh", self.refresh), ("Settings…", self.open_settings), ("About…", self.open_about),
                           ("Quit", lambda *_: self.gapp.quit())):
             item = Gtk.MenuItem(label=label)
             item.connect("activate", cb)
@@ -2109,6 +2113,14 @@ class App:
         if self._settings_shown_for != key:
             self._settings_shown_for = key
             self.open_settings()
+
+    def open_about(self, *_):
+        dlg = Gtk.AboutDialog(transient_for=self.window, modal=True, program_name="Debrid Applet", version=VERSION,
+                              comments="Tray control panel for Torbox, Real-Debrid and AllDebrid.",
+                              website=HOMEPAGE, website_label="GitHub: xb00tt/debrid-applet",
+                              license_type=Gtk.License.MIT_X11, authors=["Borislav (xb00tt)"], logo_icon_name=APP_ID)
+        dlg.connect("response", lambda d, _r: d.destroy())
+        dlg.show()
 
     def open_log(self, *_):
         """Human-readable activity log: every status message and notification, newest at the bottom."""
