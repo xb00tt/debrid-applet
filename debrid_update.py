@@ -90,3 +90,46 @@ def install_mode(here):
 def deb_command(path):
     """argv that installs the downloaded .deb behind one polkit password prompt; no shell anywhere."""
     return ["pkexec", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "--no-install-recommends", path]
+
+
+def download(asset, dest_dir, session=None):
+    """Fetch asset into dest_dir (file 0600) and verify its sha256 against the release digest; the path on success.
+    Refuses without a digest, stops at twice the declared size, leaves nothing behind on failure."""
+    if not asset.digest.startswith("sha256:"):
+        raise ApiError(f"Release has no checksum for {asset.name}; not installing")
+    os.makedirs(dest_dir, mode=0o700, exist_ok=True)
+    path = os.path.join(dest_dir, asset.name)
+    part = path + ".part"
+    limit = max(2 * asset.size, 1_000_000)
+    digest = hashlib.sha256()
+    s = session or requests.Session()
+    try:
+        with s.get(asset.url, headers={"Accept": "application/octet-stream", "User-Agent": "debrid-applet"},
+                   timeout=30, stream=True, allow_redirects=True) as r:
+            r.raise_for_status()
+            size = 0
+            with open(os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as f:
+                for chunk in r.iter_content(65536):
+                    size += len(chunk)
+                    if size > limit:
+                        raise ApiError(f"{asset.name} is larger than the release says; not installing")
+                    digest.update(chunk)
+                    f.write(chunk)
+    except requests.RequestException as e:
+        _unlink(part)
+        raise ApiError(f"Download failed: {type(e).__name__}") from e
+    except ApiError:
+        _unlink(part)
+        raise
+    if "sha256:" + digest.hexdigest() != asset.digest:
+        _unlink(part)
+        raise ApiError("Downloaded file does not match the release checksum")
+    os.replace(part, path)
+    return path
+
+
+def _unlink(path):
+    try:
+        os.unlink(path)
+    except OSError:
+        pass

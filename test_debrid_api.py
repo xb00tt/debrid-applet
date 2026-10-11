@@ -1102,6 +1102,63 @@ def test_update_install_mode_and_deb_command():
     assert du.FILES == ("debrid_api.py", "debrid_local_api.py", "debrid_update.py", "debrid_applet.py", "debrid-applet.svg")
 
 
+def test_update_download_verifies_digest():
+    import hashlib, http.server, os, shutil, stat, threading
+    import debrid_update as du
+    root, dest = "/tmp/debrid-test-update-src", "/tmp/debrid-test-update-dest"
+    for d in (root, dest):
+        shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(root)
+    payload = b"\x1f\x8b" + b"x" * 5000
+    open(os.path.join(root, "good.deb"), "wb").write(payload)
+    open(os.path.join(root, "huge.deb"), "wb").write(b"y" * 1_500_000)
+    good = "sha256:" + hashlib.sha256(payload).hexdigest()
+
+    class Quiet(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, *_): pass
+        def do_GET(self):
+            if self.path == "/redir":  # GitHub answers the API asset URL with a redirect to its CDN
+                self.send_response(302); self.send_header("Location", "/good.deb"); self.end_headers(); return
+            assert self.headers.get("Accept") == "application/octet-stream", self.headers.get("Accept")
+            super().do_GET()
+        def copyfile(self, source, outputfile):
+            try:
+                super().copyfile(source, outputfile)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), lambda *a, **k: Quiet(*a, directory=root, **k))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    asset = lambda name, path, size, digest: du.Asset(name=name, url=base + path, size=size, digest=digest)
+    path = du.download(asset("good.deb", "/good.deb", len(payload), good), dest)
+    assert path == os.path.join(dest, "good.deb") and open(path, "rb").read() == payload
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600 and stat.S_IMODE(os.stat(dest).st_mode) == 0o700
+    assert not os.path.exists(path + ".part")
+    assert du.download(asset("good.deb", "/redir", len(payload), good), dest) == path  # redirect followed, digest still checked
+    try:
+        du.download(asset("bad.deb", "/good.deb", len(payload), "sha256:" + "0" * 64), dest)
+        assert False
+    except ApiError as e:
+        assert "checksum" in str(e) and not os.path.exists(os.path.join(dest, "bad.deb")) and not os.path.exists(os.path.join(dest, "bad.deb.part"))
+    s = FakeSession()
+    try:
+        du.download(asset("nodigest.deb", "/good.deb", len(payload), ""), dest, s)  # refused before any request
+        assert False
+    except ApiError as e:
+        assert "no checksum" in str(e) and s.calls == []
+    try:
+        du.download(asset("huge.deb", "/huge.deb", 100, "sha256:" + "0" * 64), dest)  # body far larger than declared
+        assert False
+    except ApiError as e:
+        assert "larger" in str(e) and not os.path.exists(os.path.join(dest, "huge.deb.part"))
+    try:
+        du.download(asset("missing.deb", "/missing.deb", 10, good), dest)
+        assert False
+    except ApiError as e:
+        assert str(e) == "Download failed: HTTPError" and not os.path.exists(os.path.join(dest, "missing.deb.part"))
+    srv.shutdown()
+
+
 def test_add_label():
     import debrid_applet
     assert debrid_applet.add_label("magnet:?xt=urn:btih:abc&dn=Some+Name+S01") == "Some Name S01"
