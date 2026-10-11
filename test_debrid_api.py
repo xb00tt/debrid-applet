@@ -1035,6 +1035,73 @@ def test_added_within():
     assert [k for k, _l in da.TIME_FILTERS] == ["all", "day", "week", "month"] and da.EMPTY_CONFIG["time_filter"] == "week"
 
 
+RELEASE_JSON = {
+    "tag_name": "v9.9.9", "html_url": "https://github.com/xb00tt/debrid-applet/releases/tag/v9.9.9",
+    "assets": [
+        {"name": "debrid-applet-9.9.9.tar.gz", "url": "https://api.github.com/repos/xb00tt/debrid-applet/releases/assets/1",
+         "size": 1000, "digest": "sha256:" + "a" * 64},
+        {"name": "debrid-applet_9.9.9_all.deb", "url": "https://api.github.com/repos/xb00tt/debrid-applet/releases/assets/2",
+         "size": 2000, "digest": "sha256:" + "b" * 64},
+    ],
+}
+
+
+def test_update_parse_version_and_latest_release():
+    import debrid_update as du
+    assert du.parse_version("v1.2.3") == (1, 2, 3) and du.parse_version("1.2.3") == (1, 2, 3)
+    assert du.parse_version("v1.2") is None and du.parse_version("v1.2.3-rc1") is None and du.parse_version("") is None
+    assert du.parse_version("latest") is None and du.parse_version(None) is None
+    s = FakeSession(FakeResp(200, RELEASE_JSON))
+    rel = du.latest_release("1.0.3", s)
+    assert rel.version == (9, 9, 9) and rel.tag == "v9.9.9" and rel.notes_url.endswith("/tag/v9.9.9")
+    assert rel.deb.name == "debrid-applet_9.9.9_all.deb" and rel.deb.size == 2000 and rel.deb.digest == "sha256:" + "b" * 64
+    assert rel.deb.url.endswith("/assets/2") and rel.tar.name == "debrid-applet-9.9.9.tar.gz"
+    method, url, kw = s.calls[0]
+    assert (method, url) == ("GET", du.API) and kw["headers"]["Accept"] == "application/vnd.github+json"
+    assert kw["headers"]["User-Agent"] == "debrid-applet/1.0.3" and kw["timeout"] == 15
+    assert du.latest_release("9.9.9", FakeSession(FakeResp(200, RELEASE_JSON))) is None  # equal: nothing to do
+    assert du.latest_release("10.0.0", FakeSession(FakeResp(200, RELEASE_JSON))) is None  # newer installed: never downgrade
+    rel = du.latest_release("1.0.3", FakeSession(FakeResp(200, {**RELEASE_JSON, "assets": [RELEASE_JSON["assets"][0]]})))
+    assert rel.deb is None and rel.tar is not None  # a release without a .deb is still reported
+    for body, text in (({**RELEASE_JSON, "tag_name": "v1.0.4-rc1"}, "unexpected tag"), ({**RELEASE_JSON, "tag_name": "latest"}, "unexpected tag")):
+        try:
+            du.latest_release("1.0.3", FakeSession(FakeResp(200, body)))
+            assert False, body["tag_name"]
+        except ApiError as e:
+            assert text in str(e)
+    for status, text in ((403, "rate limit"), (429, "rate limit"), (500, "HTTP 500"), (404, "HTTP 404")):
+        try:
+            du.latest_release("1.0.3", FakeSession(FakeResp(status, {"message": "x"})))
+            assert False, status
+        except ApiError as e:
+            assert text in str(e)
+    try:
+        du.latest_release("1.0.3", FakeSession(requests.ConnectionError("boom https://api.github.com/x")))
+        assert False
+    except ApiError as e:
+        assert str(e) == "Update check failed: ConnectionError"  # type only, never the URL
+    try:
+        du.latest_release("1.0.3", FakeSession(FakeResp(200, None)))  # non-JSON body
+        assert False
+    except ApiError as e:
+        assert "unexpected response" in str(e)
+
+
+def test_update_install_mode_and_deb_command():
+    import os, shutil
+    import debrid_update as du
+    assert du.install_mode("/usr/share/debrid-applet") == "deb"
+    root = "/tmp/debrid-test-mode"
+    shutil.rmtree(root, ignore_errors=True)
+    os.makedirs(os.path.join(root, "git", ".git"))
+    os.makedirs(os.path.join(root, "user"))
+    assert du.install_mode(os.path.join(root, "git")) == "git" and du.install_mode(os.path.join(root, "user")) == "user"
+    assert du.deb_command("/home/u/.local/share/debrid-applet/updates/x.deb") == [
+        "pkexec", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "--no-install-recommends",
+        "/home/u/.local/share/debrid-applet/updates/x.deb"]
+    assert du.FILES == ("debrid_api.py", "debrid_local_api.py", "debrid_update.py", "debrid_applet.py", "debrid-applet.svg")
+
+
 def test_add_label():
     import debrid_applet
     assert debrid_applet.add_label("magnet:?xt=urn:btih:abc&dn=Some+Name+S01") == "Some Name S01"
