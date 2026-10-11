@@ -1028,6 +1028,9 @@ def test_fetch_bytes_guards():
     assert not da.is_public_host("127.0.0.1") and not da.is_public_host("10.1.2.3") and not da.is_public_host("localhost")
     assert da.is_public_host("8.8.8.8") and not da.is_public_host("")
     assert not da.is_public_host("100.64.0.1") and not da.is_public_host("::1") and not da.is_public_host("::ffff:127.0.0.1")
+    assert da.resolve_host("8.8.8.8") == ("8.8.8.8", True) and da.resolve_host("") == (None, False)
+    ip, public = da.resolve_host("localhost")
+    assert ip in ("127.0.0.1", "::1") and public is False
     root = "/tmp/debrid-test-http"
     os.makedirs(root, exist_ok=True)
     open(os.path.join(root, "small.torrent"), "wb").write(b"d8:announce0:e")
@@ -1035,6 +1038,9 @@ def test_fetch_bytes_guards():
     class Quiet(http.server.SimpleHTTPRequestHandler):
         def log_message(self, *_): pass
         def do_GET(self):
+            if self.path == "/host":  # echoes the Host header: proves the name travels while the socket goes to the pinned IP
+                body = (self.headers.get("Host") or "").encode()
+                self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body); return
             if self.path == "/drip":  # 10 bytes, one every half second, Content-Length known: a slow-drip server
                 import time
                 self.send_response(200); self.send_header("Content-Length", "10"); self.end_headers()
@@ -1083,6 +1089,19 @@ def test_fetch_bytes_guards():
         assert False
     except ApiError as e:
         assert "malformed URL" in str(e) and "SECRET" not in str(e)
+    port = srv.server_address[1]
+    real_resolve = da.resolve_host
+    da.resolve_host = lambda host: ("127.0.0.1", True) if host == "rebind.test" else real_resolve(host)  # a DNS answer we control
+    try:  # the socket must go to the address that passed the check, with the original name in Host (and SNI for https)
+        assert da.fetch_bytes(f"http://rebind.test:{port}/host", 1000) == f"rebind.test:{port}".encode()
+        da.resolve_host = lambda host: ("127.0.0.1", False) if host == "rebind.test" else real_resolve(host)
+        try:
+            da.fetch_bytes(f"http://rebind.test:{port}/host", 1000)
+            assert False
+        except ApiError as e:
+            assert "private or local" in str(e)
+    finally:
+        da.resolve_host = real_resolve
     import time
     t0 = time.monotonic()
     try:

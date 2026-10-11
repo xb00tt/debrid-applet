@@ -15,13 +15,16 @@ import sys
 import tempfile
 import threading
 import time
-import xml.etree.ElementTree as ET
+try:
+    import defusedxml.ElementTree as ET  # python3-defusedxml: refuses entity tricks outright
+except ImportError:  # a per-user install without the package: the stdlib parser plus the <!ENTITY guard in parse_feed
+    import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import parse_qs, quote, urljoin, urlparse
 
 import gi
-import requests
-from urllib3.util import parse_url  # the parser requests connects with, so the SSRF check sees the same host
+import urllib3
+from urllib3.util import parse_url  # the parser the fetch connects with, so the SSRF check sees the same host
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
@@ -423,19 +426,31 @@ TORRENT_MAX = 5_000_000  # bytes; .torrent files are small, feeds too
 FEED_MAX = 5_000_000
 
 
+def resolve_host(host):
+    """(address, public): the address a fetch will connect to (IPv4 first) and whether every address of the name is
+    public. (None, False) for an empty or unresolvable name. The fetch connects to this very address, so the answer
+    that was checked is the answer that is used: a name that changes its mind (DNS rebinding) gains nothing."""
+    if not host:
+        return None, False
+    try:
+        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        return None, False
+    addresses = [info[4][0] for info in infos]
+    if not addresses:
+        return None, False
+    public = True
+    for address in addresses:
+        ip = ipaddress.ip_address(address)
+        if not ip.is_global or ip.is_multicast or ip.is_reserved:  # is_global also excludes 100.64/10 (CGNAT, Tailscale)
+            public = False
+    v4 = [a for a in addresses if ":" not in a]
+    return (v4 or addresses)[0], public
+
+
 def is_public_host(host):
     """False for loopback, private, link-local and unresolvable hosts: targets a fetch must not reach."""
-    if not host:
-        return False
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except socket.gaierror:
-        return False
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if not ip.is_global or ip.is_multicast or ip.is_reserved:  # is_global also excludes 100.64/10 (CGNAT, Tailscale)
-            return False
-    return bool(infos)
+    return resolve_host(host)[1]
 
 
 def fetch_bytes(url, max_bytes, allow_private=False, deadline=90):
@@ -467,10 +482,11 @@ def fetch_bytes(url, max_bytes, allow_private=False, deadline=90):
 def _fetch_bytes(url, max_bytes, allow_private=False):
     """GET a URL with a hard size cap. Redirects are followed by hand so every hop gets the same checks:
     http(s) only, and no private/loopback hosts unless the caller trusts the URL (feeds typed into Settings).
-    The host is taken from urllib3's parser, the one requests connects with, so the two cannot disagree
-    (urlparse reads 'http://127.0.0.1:9\\@public/x' as public, urllib3 connects to 127.0.0.1).
-    Errors name the host only: tracker URLs carry passkeys.
-    ponytail: the name is resolved twice (check, then connect), so a DNS-rebinding host still gets one blind GET."""
+    The host is taken from urllib3's parser, the one the fetch connects with, so the two cannot disagree
+    (urlparse reads 'http://127.0.0.1:9\\@public/x' as public, urllib3 connects to 127.0.0.1). The socket goes to the
+    address resolve_host() checked, with the name kept for the Host header and the TLS certificate, so a name that
+    answers differently on the second lookup (DNS rebinding) cannot redirect the fetch. Errors name the host only:
+    tracker URLs carry passkeys."""
     host = ""
     try:
         for _hop in range(5):
@@ -478,25 +494,37 @@ def _fetch_bytes(url, max_bytes, allow_private=False):
             host = (parts.host or "").strip("[]")
             if parts.scheme not in ("http", "https"):
                 raise ApiError(f"unsupported URL scheme {parts.scheme!r} at {host or 'unknown host'}")
-            if not allow_private and not is_public_host(host):
+            address, public = resolve_host(host)
+            if not allow_private and not public:
                 raise ApiError("refusing to fetch from a private or local address")
-            with requests.get(url, timeout=20, stream=True, allow_redirects=False,
-                              headers={"User-Agent": "debrid-applet"}) as r:
-                if r.is_redirect or r.is_permanent_redirect:
-                    url = urljoin(url, r.headers.get("Location", ""))
-                    continue
-                r.raise_for_status()
-                data = bytearray()
-                for chunk in r.iter_content(65536):
-                    data += chunk
-                    if len(data) > max_bytes:
-                        raise ApiError(f"{host}: file larger than {max_bytes // 1_000_000} MB")
-                return bytes(data)
+            if address is None:
+                raise ApiError(f"fetch failed: cannot resolve {host or 'the host'}")
+            https = parts.scheme == "https"
+            port = parts.port or (443 if https else 80)
+            name = f"[{host}]" if ":" in host else host  # the Host header and SNI carry the name; the socket gets the address
+            pool_kw = {"server_hostname": host, "assert_hostname": host, "cert_reqs": "CERT_REQUIRED"} if https else {}
+            with (urllib3.HTTPSConnectionPool if https else urllib3.HTTPConnectionPool)(address, port, timeout=20, **pool_kw) as pool:
+                path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+                r = pool.request("GET", path, headers={"Host": name if port in (80, 443) else f"{name}:{port}",
+                                                       "User-Agent": "debrid-applet"}, redirect=False, preload_content=False)
+                with r:
+                    if 300 <= r.status < 400 and r.headers.get("Location"):
+                        url = urljoin(url, r.headers["Location"])
+                        continue
+                    if r.status >= 400:
+                        raise ApiError(f"fetch failed: HTTP {r.status} at {host}")
+                    data = bytearray()
+                    for chunk in r.stream(65536):
+                        data += chunk
+                        if len(data) > max_bytes:
+                            raise ApiError(f"{host}: file larger than {max_bytes // 1_000_000} MB")
+                    return bytes(data)
         raise ApiError("too many redirects")
-    except ValueError as e:  # urllib3 or requests could not parse the URL; their text repeats it whole
+    except ValueError as e:  # urllib3 could not parse the URL; its text repeats it whole
         raise ApiError(f"fetch failed: malformed URL ({host or 'no host'})") from e
-    except requests.RequestException as e:
-        raise ApiError(f"fetch failed: {re.sub(r'url: \S+', 'url: ' + host, str(e))}") from e
+    except (urllib3.exceptions.HTTPError, OSError) as e:  # connection, TLS, timeout: the cause's type, never the URL
+        cause = getattr(e, "reason", None) or e  # MaxRetryError wraps the SSLError / NewConnectionError / ReadTimeoutError
+        raise ApiError(f"fetch failed: {type(cause).__name__} at {host}") from e
 
 
 def parse_feed(xml_text):
@@ -505,7 +533,7 @@ def parse_feed(xml_text):
         return []
     try:
         root = ET.fromstring(xml_text)
-    except ET.ParseError:
+    except (ET.ParseError, ValueError):  # ValueError: defusedxml's refusals
         return []
     out = []
     for item in root.iter():
@@ -1483,7 +1511,7 @@ class ServiceTab(Gtk.Box):
                 except OSError as e:  # unreadable .torrent path or a failed .torrent URL fetch
                     errors.append(f"{add_label(item)}: {getattr(e, 'strerror', None) or e}")
                     continue
-                except Exception as e:  # requests errors while fetching a .torrent URL
+                except Exception as e:  # anything else while fetching a .torrent URL
                     errors.append(f"{add_label(item)}: {e}")
                     continue
                 added.append(add_label(item))
