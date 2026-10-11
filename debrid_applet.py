@@ -35,7 +35,7 @@ from debrid_api import INVALID_KEY, AllDebrid, ApiError, RealDebrid, Torbox, hum
 from debrid_local_api import LocalApi  # noqa: E402
 from debrid_update import deb_command, download, install_mode, install_user, latest_release  # noqa: E402
 
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 APP_ID = "debrid-applet"  # WM_CLASS, icon name and .desktop basename all match
 DBUS_ID = "io.github.xb00tt.DebridApplet"  # single-instance guard
 HOMEPAGE = "https://github.com/xb00tt/debrid-applet"
