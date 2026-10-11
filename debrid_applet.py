@@ -51,9 +51,10 @@ EXPIRY_WARN_DAYS = 7
 VIDEO_EXT = (".mkv", ".mp4", ".avi", ".m4v", ".webm", ".mov", ".ts", ".wmv", ".flv")
 GLib.set_prgname(APP_ID)
 
-CONFIG_DIR = os.path.expanduser("~/.config/debrid-applet")
+# Both directories can be redirected (tests, harnesses, a second profile) so nothing but the real applet touches them.
+CONFIG_DIR = os.environ.get("DEBRID_APPLET_CONFIG_DIR") or os.path.expanduser("~/.config/debrid-applet")
 CONFIG = os.path.join(CONFIG_DIR, "config.json")
-DATA_DIR = os.path.expanduser("~/.local/share/debrid-applet")  # logs; the code may live in /usr/share (read-only)
+DATA_DIR = os.environ.get("DEBRID_APPLET_DATA_DIR") or os.path.expanduser("~/.local/share/debrid-applet")  # logs
 LOG_FILE = os.path.join(DATA_DIR, "activity.log")
 LOG_MAX = 1_000_000  # default bytes; trimmed to the newest fifth when exceeded
 LOG_LEVELS = (("off", "Off"), ("errors", "Errors only"), ("actions", "Actions and notifications"),
@@ -116,13 +117,21 @@ def load_config():
 
 def save_config(cfg):
     """Write config.json with mode 600 in a 700 directory, atomically: temp file then rename, so a crash mid-write
-    keeps the previous file. Keys are kept here and nowhere else."""
+    keeps the previous file. When an API key that is on disk would vanish (a cleared field, a stray script saving
+    defaults), the old file is kept as config.json.bak first. Keys are kept here and nowhere else."""
     os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
     os.chmod(CONFIG_DIR, 0o700)
     tmp = CONFIG + ".tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         json.dump(cfg, f)
+    try:
+        with open(CONFIG) as f:
+            old = json.load(f)
+        if any(old.get(k) and not cfg.get(k) for k in KEY_FIELDS):
+            os.replace(CONFIG, CONFIG + ".bak")
+    except (OSError, ValueError, AttributeError):  # no previous file, or not a JSON object
+        pass
     os.replace(tmp, CONFIG)
 
 

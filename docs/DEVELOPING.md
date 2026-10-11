@@ -24,8 +24,12 @@ mangles `[` and `|` on some keyboard layouts, so use the clipboard or bracket-fr
 
 ## Where things live at runtime
 
-- Config: `~/.config/debrid-applet/config.json` (mode 600; versioned and migrated on load).
+- Config: `~/.config/debrid-applet/config.json` (mode 600; versioned and migrated on load). `config.json.bak` is the
+  last version that still held an API key the current file lacks.
 - Activity log and download logs: `~/.local/share/debrid-applet/`.
+- `DEBRID_APPLET_CONFIG_DIR` and `DEBRID_APPLET_DATA_DIR` redirect both. The test suite sets them before importing
+  `debrid_applet`; **any script or harness that imports the module must do the same**: a `ServiceTab` built on a
+  stand-in app saves the real config as soon as its state filter changes (this once wiped a live set of keys).
 - Per-user install: `~/.local/share/debrid-applet/`; package install: `/usr/share/debrid-applet/`.
 
 ## Releases

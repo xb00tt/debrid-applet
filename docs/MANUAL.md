@@ -147,6 +147,7 @@ Notifications, clipboard watcher and remembered filter are on by default; everyt
 ## Troubleshooting
 
 - **Tabs say "Not configured"**: open Settings → Accounts and check the keys; Test keys tells you which one fails.
+  If the keys vanished, `~/.config/debrid-applet/config.json.bak` is the last version that still had them.
 - **Two tray icons**: one is a leftover from an instance that was killed mid-poll; it disappears on the next restart
   of the applet, or restart Cinnamon (Ctrl+Alt+Esc on Mint).
 - **Window gone**: left-click the tray icon, run the script again, or `--toggle`.

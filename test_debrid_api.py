@@ -1,6 +1,11 @@
 """Offline tests for debrid_api. Run: python3 test_debrid_api.py"""
 import json
+import os
 import requests
+
+# Never let a test or a harness near the real ~/.config and ~/.local/share: debrid_applet reads these at import.
+os.environ["DEBRID_APPLET_CONFIG_DIR"] = "/tmp/debrid-test-config"
+os.environ["DEBRID_APPLET_DATA_DIR"] = "/tmp/debrid-test-data"
 
 from debrid_api import AllDebrid, ApiError, RealDebrid, Torbox, human_size, magnet_hash
 
@@ -552,9 +557,8 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
     import stat
     import debrid_applet
     shutil.rmtree(tmp_dir, ignore_errors=True)
-    debrid_applet.CONFIG_DIR = tmp_dir
-    debrid_applet.CONFIG = os.path.join(tmp_dir, "config.json")
-    debrid_applet.LOG_FILE = os.path.join(tmp_dir, "activity.log")
+    assert debrid_applet.CONFIG_DIR == tmp_dir and debrid_applet.CONFIG == os.path.join(tmp_dir, "config.json")  # env override
+    assert debrid_applet.DATA_DIR == "/tmp/debrid-test-data" and debrid_applet.LOG_FILE.startswith("/tmp/debrid-test-data/")
     defaults = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "notify_added": True, "notify_done": True,
                 "watch_clipboard": True, "columns": {}, "window": [], "remember_filter": True, "filters": {},
                 "dblclick_play": False, "dblclick_asked": False,
@@ -575,6 +579,12 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
     except TypeError:
         pass
     assert debrid_applet.load_config()["torbox_key"] == "a"  # the previous file survived the failed write
+    debrid_applet.save_config({**defaults, "realdebrid_key": "b"})  # a key vanishes (cleared field, stray harness): keep the old file
+    assert json.load(open(debrid_applet.CONFIG + ".bak"))["torbox_key"] == "a"
+    debrid_applet.save_config({**defaults, "realdebrid_key": "b", "window": [1, 1]})  # no key vanishes now: .bak untouched
+    assert json.load(open(debrid_applet.CONFIG + ".bak"))["torbox_key"] == "a"
+    debrid_applet.save_config(dict(defaults))  # the last key goes too: .bak now holds the file that still had it
+    assert json.load(open(debrid_applet.CONFIG + ".bak"))["realdebrid_key"] == "b"
     for bad in ("{not json", "null", "[]", '{"columns": 5}'):
         with open(debrid_applet.CONFIG, "w") as f:
             f.write(bad)
