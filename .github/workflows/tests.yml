@@ -11,7 +11,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
-      - name: Install GTK bindings and requests
+      - name: Install dependencies
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q python3-gi gir1.2-gtk-3.0 gir1.2-notify-0.7 gir1.2-xapp-1.0 python3-requests python3-defusedxml

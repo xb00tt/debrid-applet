@@ -20,7 +20,7 @@ try:
 except ImportError:  # a per-user install without the package: the stdlib parser plus the <!ENTITY guard in parse_feed
     import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta, timezone
-from urllib.parse import parse_qs, quote, urljoin, urlparse
+from urllib.parse import parse_qs, quote, unquote, urljoin, urlparse
 
 import gi
 import urllib3
@@ -427,8 +427,8 @@ FEED_MAX = 5_000_000
 
 
 def resolve_host(host):
-    """(address, public): the address a fetch will connect to (IPv4 first) and whether every address of the name is
-    public. (None, False) for an empty or unresolvable name. The fetch connects to this very address, so the answer
+    """(addresses, public): every address of host in the resolver's order of preference, and whether all of them are
+    public. (None, False) for an empty or unresolvable name. The fetch connects to these very addresses, so the answer
     that was checked is the answer that is used: a name that changes its mind (DNS rebinding) gains nothing."""
     if not host:
         return None, False
@@ -436,16 +436,12 @@ def resolve_host(host):
         infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
     except socket.gaierror:
         return None, False
-    addresses = [info[4][0] for info in infos]
+    addresses = list(dict.fromkeys(info[4][0] for info in infos))
     if not addresses:
         return None, False
-    public = True
-    for address in addresses:
-        ip = ipaddress.ip_address(address)
-        if not ip.is_global or ip.is_multicast or ip.is_reserved:  # is_global also excludes 100.64/10 (CGNAT, Tailscale)
-            public = False
-    v4 = [a for a in addresses if ":" not in a]
-    return (v4 or addresses)[0], public
+    public = all(ip.is_global and not ip.is_multicast and not ip.is_reserved  # is_global also excludes 100.64/10 (CGNAT)
+                 for ip in map(ipaddress.ip_address, addresses))
+    return addresses, public
 
 
 def is_public_host(host):
@@ -486,7 +482,8 @@ def _fetch_bytes(url, max_bytes, allow_private=False):
     (urlparse reads 'http://127.0.0.1:9\\@public/x' as public, urllib3 connects to 127.0.0.1). The socket goes to the
     address resolve_host() checked, with the name kept for the Host header and the TLS certificate, so a name that
     answers differently on the second lookup (DNS rebinding) cannot redirect the fetch. Errors name the host only:
-    tracker URLs carry passkeys."""
+    tracker URLs carry passkeys. One attempt per address, no retries, no Retry-After sleeps; proxy environment
+    variables do not apply here (pinning an address and a proxy exclude each other)."""
     host = ""
     try:
         for _hop in range(5):
@@ -494,37 +491,50 @@ def _fetch_bytes(url, max_bytes, allow_private=False):
             host = (parts.host or "").strip("[]")
             if parts.scheme not in ("http", "https"):
                 raise ApiError(f"unsupported URL scheme {parts.scheme!r} at {host or 'unknown host'}")
-            address, public = resolve_host(host)
+            addresses, public = resolve_host(host)
+            if addresses is None:
+                raise ApiError(f"fetch failed: cannot resolve {host or 'the host'}")
             if not allow_private and not public:
                 raise ApiError("refusing to fetch from a private or local address")
-            if address is None:
-                raise ApiError(f"fetch failed: cannot resolve {host or 'the host'}")
+            allow_private = allow_private and not public  # a typed URL is trusted as typed; a public server's redirects are not
             https = parts.scheme == "https"
             port = parts.port or (443 if https else 80)
-            name = f"[{host}]" if ":" in host else host  # the Host header and SNI carry the name; the socket gets the address
-            pool_kw = {"server_hostname": host, "assert_hostname": host, "cert_reqs": "CERT_REQUIRED"} if https else {}
-            with (urllib3.HTTPSConnectionPool if https else urllib3.HTTPConnectionPool)(address, port, timeout=20, **pool_kw) as pool:
-                path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
-                r = pool.request("GET", path, headers={"Host": name if port in (80, 443) else f"{name}:{port}",
-                                                       "User-Agent": "debrid-applet"}, redirect=False, preload_content=False)
-                with r:
-                    if 300 <= r.status < 400 and r.headers.get("Location"):
-                        url = urljoin(url, r.headers["Location"])
-                        continue
-                    if r.status >= 400:
-                        raise ApiError(f"fetch failed: HTTP {r.status} at {host}")
-                    data = bytearray()
-                    for chunk in r.stream(65536):
-                        data += chunk
-                        if len(data) > max_bytes:
-                            raise ApiError(f"{host}: file larger than {max_bytes // 1_000_000} MB")
-                    return bytes(data)
+            name = f"[{host}]" if ":" in host else host  # Host and TLS carry the name; the socket gets the address
+            headers = {"Host": name if port == (443 if https else 80) else f"{name}:{port}", "User-Agent": "debrid-applet"}
+            if parts.auth:  # user:pass@host in a typed feed URL
+                headers.update(urllib3.util.make_headers(basic_auth=unquote(parts.auth)))
+            pool_kw = {"server_hostname": host.rstrip("."), "cert_reqs": "CERT_REQUIRED"} if https else {}
+            path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+            for i, address in enumerate(addresses):  # all vetted: on a refused connect, the next one
+                pool = (urllib3.HTTPSConnectionPool if https else urllib3.HTTPConnectionPool)(address, port, timeout=20, **pool_kw)
+                try:
+                    r = pool.request("GET", path, headers=headers, redirect=False, retries=False, preload_content=False)
+                    break
+                except urllib3.exceptions.ConnectTimeoutError:  # NewConnectionError is one of these
+                    pool.close()
+                    if i == len(addresses) - 1:
+                        raise
+            try:
+                if 300 <= r.status < 400 and r.headers.get("Location"):
+                    url = urljoin(url, r.headers["Location"])
+                    continue
+                if r.status >= 400:
+                    raise ApiError(f"fetch failed: HTTP {r.status} at {host}")
+                data = bytearray()
+                while chunk := r.read(65536):  # read(), not stream(): http.client caps a chunk-size line, stream() does not
+                    data += chunk
+                    if len(data) > max_bytes:
+                        raise ApiError(f"{host}: file larger than {max_bytes // 1_000_000} MB")
+                return bytes(data)
+            finally:
+                r.close()
+                pool.close()
         raise ApiError("too many redirects")
     except ValueError as e:  # urllib3 could not parse the URL; its text repeats it whole
         raise ApiError(f"fetch failed: malformed URL ({host or 'no host'})") from e
-    except (urllib3.exceptions.HTTPError, OSError) as e:  # connection, TLS, timeout: the cause's type, never the URL
-        cause = getattr(e, "reason", None) or e  # MaxRetryError wraps the SSLError / NewConnectionError / ReadTimeoutError
-        raise ApiError(f"fetch failed: {type(cause).__name__} at {host}") from e
+    except (urllib3.exceptions.HTTPError, OSError) as e:  # connection, TLS, timeout: the type, plus OpenSSL's reason for TLS
+        detail = f" ({e})" if isinstance(e, urllib3.exceptions.SSLError) else ""
+        raise ApiError(f"fetch failed: {type(e).__name__} at {host}{detail}") from e
 
 
 def parse_feed(xml_text):

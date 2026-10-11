@@ -1014,8 +1014,18 @@ def test_feeds():
                      ("g2", "Show.S01E02.720p", "https://tr/f.torrent"),
                      ("https://site/page", "Other", "https://site/page")]
     assert da.parse_feed("not xml") == []
-    assert da.parse_feed('<?xml version="1.0"?><!DOCTYPE r [<!ENTITY a "aaaa">]><rss><channel><item><title>&a;</title>'
-                         '<link>magnet:?xt=urn:btih:b</link></item></channel></rss>') == []  # no DTD entities (expansion bombs)
+    import importlib.util
+    import xml.etree.ElementTree as std
+    bomb = ('<?xml version="1.0"?><!DOCTYPE r [<!ENTITY a "aaaa">]><rss><channel><item><title>&a;</title>'
+            '<link>magnet:?xt=urn:btih:b</link></item></channel></rss>')
+    real = da.ET
+    try:
+        for da.ET in (real, std):  # the package's parser and the install.sh fallback both refuse entity declarations
+            assert da.parse_feed(bomb) == []
+    finally:
+        da.ET = real
+    if importlib.util.find_spec("defusedxml"):
+        assert da.ET.__name__ == "defusedxml.ElementTree"
     feeds = da.parse_feed_lines("https://a/rss | 1080p | Torbox\n# comment\nhttps://b/rss\nbad line without url | x | y\nhttps://c/rss | | AllDebrid")
     assert feeds == [("https://a/rss", "1080p", "Torbox"), ("https://b/rss", "", ""), ("https://c/rss", "", "AllDebrid")]
     assert da.feed_matches("Show.S01E01.1080p", "1080p") and da.feed_matches("x", "") and not da.feed_matches("x", "[")  # bad regex never matches
@@ -1028,9 +1038,9 @@ def test_fetch_bytes_guards():
     assert not da.is_public_host("127.0.0.1") and not da.is_public_host("10.1.2.3") and not da.is_public_host("localhost")
     assert da.is_public_host("8.8.8.8") and not da.is_public_host("")
     assert not da.is_public_host("100.64.0.1") and not da.is_public_host("::1") and not da.is_public_host("::ffff:127.0.0.1")
-    assert da.resolve_host("8.8.8.8") == ("8.8.8.8", True) and da.resolve_host("") == (None, False)
-    ip, public = da.resolve_host("localhost")
-    assert ip in ("127.0.0.1", "::1") and public is False
+    assert da.resolve_host("8.8.8.8") == (["8.8.8.8"], True) and da.resolve_host("") == (None, False)
+    addresses, public = da.resolve_host("localhost")
+    assert addresses and set(addresses) <= {"127.0.0.1", "::1"} and public is False
     root = "/tmp/debrid-test-http"
     os.makedirs(root, exist_ok=True)
     open(os.path.join(root, "small.torrent"), "wb").write(b"d8:announce0:e")
@@ -1038,9 +1048,13 @@ def test_fetch_bytes_guards():
     class Quiet(http.server.SimpleHTTPRequestHandler):
         def log_message(self, *_): pass
         def do_GET(self):
-            if self.path == "/host":  # echoes the Host header: proves the name travels while the socket goes to the pinned IP
-                body = (self.headers.get("Host") or "").encode()
+            if self.path in ("/host", "/auth"):  # echo Host (the name travels while the socket goes to the pinned IP) or Authorization
+                body = (self.headers.get("Host" if self.path == "/host" else "Authorization") or "").encode()
                 self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body); return
+            if self.path == "/503":  # a server asking to come back later: one attempt, no sleeping
+                self.send_response(503); self.send_header("Retry-After", "5"); self.send_header("Content-Length", "0"); self.end_headers(); return
+            if self.path == "/to-private":  # a public-looking URL bouncing the fetch onto the LAN
+                self.send_response(302); self.send_header("Location", f"http://127.0.0.1:{self.server.server_address[1]}/host"); self.end_headers(); return
             if self.path == "/drip":  # 10 bytes, one every half second, Content-Length known: a slow-drip server
                 import time
                 self.send_response(200); self.send_header("Content-Length", "10"); self.end_headers()
@@ -1069,7 +1083,7 @@ def test_fetch_bytes_guards():
     except ApiError as e:
         assert "private or local" in str(e)
     assert da.fetch_bytes(base + "/small.torrent", 1000, allow_private=True) == b"d8:announce0:e"
-    try:  # urlparse sees host 8.8.8.8 here, urllib3 (and so requests) connects to 127.0.0.1
+    try:  # urlparse sees host 8.8.8.8 here, urllib3 connects to 127.0.0.1
         da.fetch_bytes(base + "\\@8.8.8.8/small.torrent", 1000)
         assert False, "backslash authority trick must be refused"
     except ApiError as e:
@@ -1089,17 +1103,61 @@ def test_fetch_bytes_guards():
         assert False
     except ApiError as e:
         assert "malformed URL" in str(e) and "SECRET" not in str(e)
+    import time
+    t0 = time.monotonic()
+    try:
+        da.fetch_bytes(base + "/503", 1000, allow_private=True)
+        assert False
+    except ApiError as e:
+        assert "503" in str(e) and time.monotonic() - t0 < 1, (str(e), time.monotonic() - t0)  # no urllib3 retries, no Retry-After sleep
     port = srv.server_address[1]
     real_resolve = da.resolve_host
-    da.resolve_host = lambda host: ("127.0.0.1", True) if host == "rebind.test" else real_resolve(host)  # a DNS answer we control
-    try:  # the socket must go to the address that passed the check, with the original name in Host (and SNI for https)
+    calls, answers = [], {"rebind.test": (["127.0.0.1"], True)}  # DNS answers we control
+    da.resolve_host = lambda host: (calls.append(host), answers[host.rstrip(".")])[1] if host.rstrip(".") in answers else real_resolve(host)
+    try:  # the socket must go to the address that passed the check, with the original name in Host (and in TLS for https)
         assert da.fetch_bytes(f"http://rebind.test:{port}/host", 1000) == f"rebind.test:{port}".encode()
-        da.resolve_host = lambda host: ("127.0.0.1", False) if host == "rebind.test" else real_resolve(host)
+        assert calls == ["rebind.test"]  # looked up once: the address that was checked is the address that was used
+        answers["rebind.test"] = (["127.0.0.2", "127.0.0.1"], True)  # the first vetted address refuses: the next one is tried
+        assert da.fetch_bytes(f"http://rebind.test:{port}/host", 1000) == f"rebind.test:{port}".encode()
+        assert da.fetch_bytes(f"http://user:p%40ss@rebind.test:{port}/auth", 1000) == b"Basic dXNlcjpwQHNz"  # URL userinfo -> Basic auth
+        answers["rebind.test"] = (["127.0.0.1"], True)
+        try:  # a feed URL is trusted as typed; where its server redirects is not
+            da.fetch_bytes(f"http://rebind.test:{port}/to-private", 1000, allow_private=True)
+            assert False
+        except ApiError as e:
+            assert "private or local" in str(e)
+        answers["rebind.test"] = (["127.0.0.1"], False)
         try:
             da.fetch_bytes(f"http://rebind.test:{port}/host", 1000)
             assert False
         except ApiError as e:
             assert "private or local" in str(e)
+        answers["rebind.test"] = (None, False)
+        try:
+            da.fetch_bytes(f"http://rebind.test:{port}/host", 1000)
+            assert False
+        except ApiError as e:
+            assert "cannot resolve" in str(e)
+        seen = {}
+
+        class StubPool:  # https: the pool opens on the checked address and verifies the certificate for the name
+            def __init__(self, host, port, **kw): seen.update(host=host, port=port, **kw)
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def close(self): pass
+            def request(self, *a, **kw):
+                raise da.urllib3.exceptions.SSLError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: certificate has expired")
+        real_pool, da.urllib3.HTTPSConnectionPool = da.urllib3.HTTPSConnectionPool, StubPool
+        answers["rebind.test"] = (["127.0.0.1"], True)
+        try:
+            da.fetch_bytes("https://rebind.test./x?passkey=SECRET", 10)  # trailing-dot FQDN: the name is used without it
+            assert False
+        except ApiError as e:
+            assert "SSLError" in str(e) and "certificate has expired" in str(e) and "SECRET" not in str(e) and "/x" not in str(e)
+        finally:
+            da.urllib3.HTTPSConnectionPool = real_pool
+        assert seen["host"] == "127.0.0.1" and seen["port"] == 443 and seen["server_hostname"] == "rebind.test"
+        assert seen["cert_reqs"] == "CERT_REQUIRED" and "assert_hostname" not in seen  # OpenSSL's own hostname check
     finally:
         da.resolve_host = real_resolve
     import time

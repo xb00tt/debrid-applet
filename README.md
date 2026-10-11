@@ -16,7 +16,7 @@ sudo apt install ./debrid-applet_1.0.6_all.deb
 
 It starts with your session from now on. To start it right away, look for **Debrid Applet** in the menu.
 
-Prefer running from source? Clone the repo and run `./install.sh`.
+Prefer running from source? Clone the repo and run `./install.sh` (`sudo apt install python3-requests python3-defusedxml` first).
 
 ## First run
 
