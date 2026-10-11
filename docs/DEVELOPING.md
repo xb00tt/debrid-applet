@@ -37,6 +37,7 @@ a GitHub release with generated notes. `packaging/build-deb.sh` also works local
 ## Adding a service
 
 One client class in `debrid_api.py` implementing `account`, `torrents`, `add_magnet`, `add_torrent_file`,
-`add_link`, `links`, `delete` (optionally `check_cached` and `control`), a key field in the Settings form, a line in
-`build_tabs()`, and a default in `DEFAULT_HIDDEN` for columns it never reports. Verify it against the live API
+`add_link`, `links`, `delete` (optionally `check_cached` and `control`), then in `debrid_applet.py`: an entry in
+`CLIENTS` (class and config key; tabs, `SERVICES` and `KEY_FIELDS` derive from it), the key's default in `EMPTY_CONFIG`,
+a key field in the Settings form, and a default in `DEFAULT_HIDDEN` for columns it never reports. Verify it against the live API
 before shipping; every service so far needed fixes that only real keys exposed. See `../TODO.md` for what is not planned.

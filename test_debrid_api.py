@@ -93,6 +93,8 @@ def test_rd_torrents_paginates():
     out = RealDebrid("t", s).torrents()
     assert len(out) == 5003 and s.calls[1][2]["params"] == {"limit": 5000, "page": 2}
     assert len(s.calls) == 2
+    s = FakeSession(*[FakeResp(200, full)] * 41)  # a server that never sends a short page
+    assert len(RealDebrid("t", s).torrents()) == 40 * 5000 and len(s.calls) == 40  # bounded, never loops forever
 
 
 def test_rd_active_only():
@@ -248,6 +250,11 @@ def test_network_error():
         assert False
     except ApiError as e:
         assert str(e).startswith("Network error:")
+    try:  # requests embeds the URL; Torbox's requestdl carries the key in the query string
+        Torbox("sekretkey", FakeSession(requests.ConnectionError("... with url: /requestdl?token=sekretkey&torrent_id=7"))).account()
+        assert False
+    except ApiError as e:
+        assert "sekretkey" not in str(e) and "token=***" in str(e)
 
 
 def test_ad_account():
@@ -363,6 +370,19 @@ def test_tb_torrents_merges_webdl():
     assert s.calls[0][:2] == ("GET", TB + "/torrents/mylist")
     assert s.calls[0][2]["params"] == {"bypass_cache": "true", "limit": 5000}
     assert s.calls[1][:2] == ("GET", TB + "/webdl/mylist")
+
+
+def test_odd_rows_do_not_sink_the_poll():
+    s = FakeSession(ok([{"name": "no id"}, {"id": 2, "name": "junk", "size": "unknown", "progress": None, "seeds": [1]}]), ok([]))
+    out = Torbox("t", s).torrents()
+    assert [t["id"] for t in out] == ["2"] and out[0]["size"] == 0 and out[0]["progress"] == 0.0 and out[0]["seeds"] == 0
+    from debrid_api import _iso_from_ts
+    assert _iso_from_ts(10 ** 20) == "" and _iso_from_ts("x") == "" and _iso_from_ts(0) == ""
+    s = FakeSession(FakeResp(200, [{"status": "waiting_files_selection"}, {"id": "B", "status": "downloading", "bytes": "junk"}]))
+    out = RealDebrid("t", s).torrents()
+    assert [t["id"] for t in out] == ["B"] and out[0]["size"] == 0 and len(s.calls) == 1  # no selectFiles for the id-less row
+    s = FakeSession(ad_ok({"magnets": [{"filename": "noid"}, {"id": 5, "statusCode": "x", "size": "big"}]}))
+    assert [t["id"] for t in AllDebrid("t", s).torrents()] == ["5"]
 
 
 def test_tb_done_requires_present():
@@ -531,10 +551,10 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
     import shutil
     import stat
     import debrid_applet
-    debrid_applet.Secret = None  # never touch the real keyring from a test
     shutil.rmtree(tmp_dir, ignore_errors=True)
     debrid_applet.CONFIG_DIR = tmp_dir
     debrid_applet.CONFIG = os.path.join(tmp_dir, "config.json")
+    debrid_applet.LOG_FILE = os.path.join(tmp_dir, "activity.log")
     defaults = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "notify_added": True, "notify_done": True,
                 "watch_clipboard": True, "columns": {}, "window": [], "remember_filter": True, "filters": {},
                 "dblclick_play": False, "dblclick_asked": False,
@@ -549,9 +569,17 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
     assert stat.S_IMODE(os.stat(debrid_applet.CONFIG).st_mode) == 0o600
     assert stat.S_IMODE(os.stat(tmp_dir).st_mode) == 0o700
     assert debrid_applet.load_config() == {**defaults, "torbox_key": "a", "realdebrid_key": "b", "notify_done": False}
-    with open(debrid_applet.CONFIG, "w") as f:
-        f.write("{not json")
-    assert debrid_applet.load_config() == defaults
+    try:
+        debrid_applet.save_config({"torbox_key": object()})  # json.dump fails half-way through
+    except TypeError:
+        pass
+    assert debrid_applet.load_config()["torbox_key"] == "a"  # the previous file survived the failed write
+    for bad in ("{not json", "null", "[]", '{"columns": 5}'):
+        with open(debrid_applet.CONFIG, "w") as f:
+            f.write(bad)
+        assert debrid_applet.load_config() == defaults
+        assert open(debrid_applet.CONFIG + ".bad").read() == bad  # moved aside, never overwritten
+        assert not os.path.exists(debrid_applet.CONFIG)
 
 
 def test_open_url_only_http():
@@ -610,6 +638,9 @@ def test_state_kind_buckets():
     assert k("uploading (no peers)") == "seed"
     assert k("stalled (no seeds)") == "warn" and k("paused") == "warn"
     assert k("error") == "error" and k("magnet_error") == "error" and k("dead") == "error" and k("virus") == "error"
+    assert k("select failed: infringing_file") == "error"
+    assert debrid_applet.is_active({"done": False, "state": "downloading"}) and not debrid_applet.is_active({"done": True})
+    assert not debrid_applet.is_active({"done": False, "state": "error: File too big"})  # never finishes, needs no fast polls
     assert k("") == "done"
     assert set(debrid_applet.PALETTE) == {"active", "done", "seed", "warn", "error"}
 
@@ -644,8 +675,9 @@ def test_video_links_and_magnet():
     assert debrid_applet.video_links(links) == [{"name": "ep1.mkv", "url": "https://cdn/1"}]
     assert debrid_applet.video_links(links[:1] + links[2:]) == [{"name": "ep1.srt", "url": "https://cdn/s"}]
     assert debrid_applet.video_links([]) == []
-    assert debrid_applet.strict_videos(links) == [{"name": "ep1.mkv", "url": "https://cdn/1"}]
-    assert debrid_applet.strict_videos(links[:1] + links[2:]) == []
+    assert debrid_applet.video_links(links, strict=True) == [{"name": "ep1.mkv", "url": "https://cdn/1"}]
+    assert debrid_applet.video_links(links[:1] + links[2:], strict=True) == []
+    assert debrid_applet.usable_links(links) == links[1:3]
     assert debrid_applet.magnet_for("ABC123", "My Show S01") == "magnet:?xt=urn:btih:ABC123&dn=My%20Show%20S01"
     assert debrid_applet.magnet_for("", "x") == ""
 
@@ -661,6 +693,7 @@ def test_drop_items():
 def test_column_layout_per_tab_and_migration():
     import debrid_applet
     cols = {"order": ["name", "check"], "hidden": ["peers"], "sort": ["added", "desc"]}  # old shared format
+    cols = debrid_applet.migrate_config({"columns": cols})["columns"]
     tb = debrid_applet.column_layout(cols, "Torbox")
     assert tb == {"order": ["name", "check"], "hidden": ["peers"], "sort": ["added", "desc"]}
     assert cols["Real-Debrid"] == tb and "order" not in cols
@@ -677,8 +710,9 @@ def test_column_layout_per_tab_and_migration():
 def test_aria2_command():
     import debrid_applet
     cmd = debrid_applet.aria2_command(["https://cdn/a b.mkv", "https://cdn/c"], "/home/u/Downloads")
-    assert cmd == "aria2c -c -x 8 -s 8 --dir=/home/u/Downloads 'https://cdn/a b.mkv' https://cdn/c"
+    assert cmd == "aria2c -c -Z -x 8 -s 8 --dir=/home/u/Downloads 'https://cdn/a b.mkv' https://cdn/c"
     assert debrid_applet.aria2_command([], "/x") == ""
+    assert debrid_applet.aria2_command(["--dir=/etc", "ftp://x"], "/x") == ""  # only http(s) URLs reach the shell line
 
 
 def test_power_helpers():
@@ -692,6 +726,7 @@ def test_power_helpers():
     assert da.pick_subtitle("Show.S01E01.mkv", links) == "https://s1"
     assert da.pick_subtitle("Show.S01E02.mkv", links) is None  # two candidates, none matching: skip
     assert da.pick_subtitle("x.mkv", [{"name": "only.srt", "url": "https://s"}]) == "https://s"
+    assert da.pick_subtitle("x.mkv", [{"name": "only.srt", "url": "--log-file=/home/u/.bashrc"}]) is None  # a flag, not a URL
     assert da.player_cmd("mpv", "https://v", "https://s") == ["mpv", "--save-position-on-quit", "--sub-file=https://s", "https://v"]
     assert da.player_cmd("celluloid", "https://v", "https://s") == ["celluloid", "--mpv-save-position-on-quit", "--mpv-sub-file=https://s", "https://v"]
     assert da.player_cmd("vlc", "https://v", "https://s") == ["vlc", "--sub-file=https://s", "https://v"]
@@ -703,9 +738,13 @@ def test_power_helpers():
     assert da.custom_cmd("mpv {url} --sub-file={sub}", "https://v", None) == ["mpv", "https://v"]
     assert da.custom_cmd("mpv {url} --sub-file={sub}", "https://v", "https://s") == ["mpv", "https://v", "--sub-file=https://s"]
     assert da.custom_cmd("stremio", "https://v", None) == ["stremio", "https://v"]
-    assert da.download_command(["https://a", "https://b"], "/d/x", "aria2c") == ["aria2c", "-c", "-x", "8", "-s", "8", "--dir=/d/x", "https://a", "https://b"]
+    assert da.download_command(["https://a", "https://b"], "/d/x", "aria2c") == ["aria2c", "-c", "-Z", "-x", "8", "-s", "8", "--dir=/d/x", "https://a", "https://b"]
     assert da.download_command(["https://a"], "/d/x", "wget") == ["wget", "-c", "-P", "/d/x", "https://a"]
+    assert da.download_command(["--output-document=/home/u/.bashrc", "https://a", None], "/d/x", "wget") == ["wget", "-c", "-P", "/d/x", "https://a"]
+    assert da.download_command(["-e", "ftp://a"], "/d/x", "aria2c") == []  # service junk never becomes a flag
     assert da.safe_dirname("Show: S01/E01 [x]?") == "Show_ S01_E01 [x]_"
+    assert all(da.safe_dirname(n) == "download" for n in (".", "..", "...", " .. ", ""))  # would escape the download folder
+    assert da.safe_dirname("..hidden..") == "hidden"
 
 
 def test_local_api():
@@ -715,7 +754,7 @@ def test_local_api():
         ("Torbox", ["magnet:?xt=a", "https://h/f", "https://body/1"])
     assert parse_add("", "") == ("", [])
     calls = []
-    api = LocalApi(0, "sekret", on_add=lambda s, items: calls.append(("add", s, items)) or len(items),
+    api = LocalApi(0, "sekret", on_add=lambda s, items: calls.append(("add", s, items)) or (0 if s == "Nope" else len(items)),
                    on_toggle=lambda: calls.append(("toggle",)), status=lambda: {"Torbox": 2})
     api.start()
     base = f"http://127.0.0.1:{api.port}"
@@ -738,11 +777,14 @@ def test_local_api():
     code, body, _ = call("/add?service=AllDebrid", data=b"https://x/1\nhttps://x/2", headers={"X-Debrid-Token": "sekret"})
     assert body["queued"] == 2 and calls[-1][2] == ["https://x/1", "https://x/2"]
     code, body, _ = call("/add?token=sekret&item=/etc/passwd&magnet=magnet:?xt=b")
-    assert code == 400 and "magnet" in body["error"] and calls[-1][2] == ["magnet:?xt=urn:btih:abc"] or calls[-1][2] == ["https://x/1", "https://x/2"]
+    assert code == 400 and "magnet" in body["error"] and calls[-1][2] == ["https://x/1", "https://x/2"]  # nothing new was queued
+    assert call("/add?magnet=magnet:?xt=a", headers={"X-Debrid-Token": "sekr\u00e9t"})[0] == 401  # non-ASCII: still a 401, no trace
+    assert call("/add?token=sekret&magnet=magnet:?xt=a", data=b"x", headers={"Content-Length": "abc"})[0] == 400
     assert call("/toggle?token=sekret")[1] == {"ok": True} and calls[-1] == ("toggle",)
     assert call("/status?token=sekret")[1] == {"Torbox": 2}
     assert call("/add?token=sekret&magnet=magnet:?xt=c", host="evil.example:80")[0] == 403
     assert call("/add?token=sekret")[0] == 400
+    assert call("/add?token=sekret&service=Nope&magnet=magnet:?xt=a")[0] == 400  # on_add refused: not a silent 200
     assert call("/nope?token=sekret")[0] == 404
     api.stop()
 
@@ -754,14 +796,18 @@ def test_activity_log(path="/tmp/debrid-test-activity.log"):
         os.remove(path)
     da.append_log(path, "Torbox", "Added 1")
     da.append_log(path, "", "Local API started on port 1")
+    import stat
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600  # item names and error text stay with this user
     lines = open(path).read().splitlines()
     assert len(lines) == 2 and lines[0].endswith("  Torbox       Added 1") and "Local API" in lines[1]
     assert len(lines[0].split("  ")[0]) == 19  # YYYY-MM-DD HH:MM:SS
     with open(path, "w") as f:
         f.write("x" * 2_000_000 + "\n")
+    os.chmod(path, 0o644)  # as an older version left it
     da.append_log(path, "AllDebrid", "after rotation")
     data = open(path).read()
     assert len(data) < 300_000 and data.endswith("after rotation\n")
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600  # a file made by an older version is tightened too
     assert da.read_log_tail(path, 1).strip().endswith("after rotation")
     assert da.read_log_tail("/nonexistent/x.log", 5) == ""
 
@@ -882,6 +928,8 @@ def test_feeds():
                      ("g2", "Show.S01E02.720p", "https://tr/f.torrent"),
                      ("https://site/page", "Other", "https://site/page")]
     assert da.parse_feed("not xml") == []
+    assert da.parse_feed('<?xml version="1.0"?><!DOCTYPE r [<!ENTITY a "aaaa">]><rss><channel><item><title>&a;</title>'
+                         '<link>magnet:?xt=urn:btih:b</link></item></channel></rss>') == []  # no DTD entities (expansion bombs)
     feeds = da.parse_feed_lines("https://a/rss | 1080p | Torbox\n# comment\nhttps://b/rss\nbad line without url | x | y\nhttps://c/rss | | AllDebrid")
     assert feeds == [("https://a/rss", "1080p", "Torbox"), ("https://b/rss", "", ""), ("https://c/rss", "", "AllDebrid")]
     assert da.feed_matches("Show.S01E01.1080p", "1080p") and da.feed_matches("x", "") and not da.feed_matches("x", "[")  # bad regex never matches
@@ -893,6 +941,7 @@ def test_fetch_bytes_guards():
     import debrid_applet as da
     assert not da.is_public_host("127.0.0.1") and not da.is_public_host("10.1.2.3") and not da.is_public_host("localhost")
     assert da.is_public_host("8.8.8.8") and not da.is_public_host("")
+    assert not da.is_public_host("100.64.0.1") and not da.is_public_host("::1") and not da.is_public_host("::ffff:127.0.0.1")
     root = "/tmp/debrid-test-http"
     os.makedirs(root, exist_ok=True)
     open(os.path.join(root, "small.torrent"), "wb").write(b"d8:announce0:e")
@@ -919,11 +968,26 @@ def test_fetch_bytes_guards():
     except ApiError as e:
         assert "private or local" in str(e)
     assert da.fetch_bytes(base + "/small.torrent", 1000, allow_private=True) == b"d8:announce0:e"
+    try:  # urlparse sees host 8.8.8.8 here, urllib3 (and so requests) connects to 127.0.0.1
+        da.fetch_bytes(base + "\\@8.8.8.8/small.torrent", 1000)
+        assert False, "backslash authority trick must be refused"
+    except ApiError as e:
+        assert "private or local" in str(e)
     try:
         da.fetch_bytes(base + "/big.bin", 100_000, allow_private=True)
         assert False
     except ApiError as e:
-        assert "larger than" in str(e)
+        assert "larger than" in str(e) and "/big.bin" not in str(e)
+    try:
+        da.fetch_bytes(base + "/missing.torrent?passkey=SECRET", 1000, allow_private=True)
+        assert False
+    except ApiError as e:
+        assert "404" in str(e) and "SECRET" not in str(e) and "127.0.0.1" in str(e)  # host only, never the URL
+    try:
+        da.fetch_bytes("http://tracker.example:99999/dl.torrent?passkey=SECRET", 1000)  # port out of range: parser error
+        assert False
+    except ApiError as e:
+        assert "malformed URL" in str(e) and "SECRET" not in str(e)
     assert da.fetch_bytes(base + "/redir", 1000, allow_private=True) == b"d8:announce0:e"
     for path, text in (("/redir-bad", "unsupported"), ("/loop", "too many redirects")):
         try:
@@ -940,6 +1004,8 @@ def test_add_label():
     assert debrid_applet.add_label("magnet:?xt=urn:btih:abcdef").startswith("magnet:?xt=urn:btih:abcdef")
     assert debrid_applet.add_label("/tmp/x/thing.torrent") == "thing.torrent"
     assert debrid_applet.add_label("https://hoster/dir/file.bin") == "file.bin"
+    assert debrid_applet.add_label("https://t/download.php?id=1&passkey=abc") == "download.php"  # query never shown
+    assert debrid_applet.add_label("https://tracker.example/") == "tracker.example"
     assert len(debrid_applet.add_label("x" * 500)) == 60
 
 

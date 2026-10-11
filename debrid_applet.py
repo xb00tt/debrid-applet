@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Tray control panel for Torbox and Real-Debrid."""
+"""Tray control panel for Torbox, Real-Debrid and AllDebrid."""
+import collections
+import functools
 import ipaddress
 import json
 import os
@@ -15,9 +17,11 @@ import threading
 import time
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timezone
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, urljoin, urlparse
 
 import gi
+import requests
+from urllib3.util import parse_url  # the parser requests connects with, so the SSRF check sees the same host
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
@@ -25,15 +29,9 @@ gi.require_version("Pango", "1.0")
 gi.require_version("Notify", "0.7")
 gi.require_version("XApp", "1.0")
 from gi.repository import Gdk, Gio, GLib, Gtk, Notify, Pango, XApp  # noqa: E402
-try:
-    gi.require_version("Secret", "1")
-    from gi.repository import Secret  # noqa: E402
-except (ValueError, ImportError):  # no libsecret: the keyring option stays greyed out
-    Secret = None
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-from debrid_api import AllDebrid, ApiError, RealDebrid, Torbox, human_size, magnet_hash  # noqa: E402
+from debrid_api import INVALID_KEY, AllDebrid, ApiError, RealDebrid, Torbox, human_size, magnet_hash  # noqa: E402
 from debrid_local_api import LocalApi  # noqa: E402
 
 VERSION = "1.0.0"
@@ -43,7 +41,9 @@ PLAYERS = ("mpv", "vlc", "celluloid", "smplayer", "totem")
 SUB_FLAG = {"mpv": "--sub-file={}", "celluloid": "--mpv-sub-file={}", "smplayer": "-sub {}", "vlc": "--sub-file={}"}
 RESUME_FLAG = {"mpv": "--save-position-on-quit", "celluloid": "--mpv-save-position-on-quit"}  # resume where you stopped
 SUB_EXT = (".srt", ".ass", ".vtt", ".sub")
-SERVICES = ("Torbox", "Real-Debrid", "AllDebrid")
+CLIENTS = ((Torbox, "torbox_key"), (RealDebrid, "realdebrid_key"), (AllDebrid, "alldebrid_key"))  # class, config key
+SERVICES = tuple(c.name for c, _k in CLIENTS)
+KEY_FIELDS = tuple(k for _c, k in CLIENTS)
 DASHBOARDS = {"Torbox": "https://torbox.app/dashboard", "Real-Debrid": "https://real-debrid.com/torrents",
               "AllDebrid": "https://alldebrid.com/magnets"}
 SERVICE_COLORS = {"Torbox": "#e8761b", "Real-Debrid": "#3b82f6", "AllDebrid": "#a855f7"}  # Service column on the All tab
@@ -77,31 +77,6 @@ EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "no
                 "config_version": 2,  # bumped when the layout changes; see migrate_config()
                 "notified_expiry": {}}  # service -> expiry date already warned about
 POLL_FAST, POLL_SLOW = 8, 60  # seconds between polls while something is active / when everything is idle
-INVALID_KEY = "Invalid API key"
-
-
-KEY_FIELDS = ("torbox_key", "realdebrid_key", "alldebrid_key")
-
-
-def _import_keys_from_keyring(cfg):
-    """One-time transition from the removed keyring option: copy any key the keyring still holds into the file
-    and delete it there. Silently does nothing without libsecret or without entries."""
-    if not Secret:
-        return False
-    try:
-        schema = Secret.Schema.new("io.github.xb00tt.DebridApplet", Secret.SchemaFlags.NONE,
-                                   {"key": Secret.SchemaAttributeType.STRING})
-        moved = False
-        for name in KEY_FIELDS:
-            value = Secret.password_lookup_sync(schema, {"key": name}, None)
-            if value:
-                if not cfg.get(name):
-                    cfg[name] = value
-                    moved = True
-                Secret.password_clear_sync(schema, {"key": name}, None)
-        return moved
-    except GLib.Error:
-        return False
 
 
 def migrate_config(cfg):
@@ -109,8 +84,9 @@ def migrate_config(cfg):
     version = int(cfg.get("config_version") or 1)
     cols = cfg.get("columns") or {}
     if version < 2 and any(k in cols for k in ("order", "hidden", "sort")):  # one shared layout -> one per service
-        for name in SERVICES:
-            column_layout(cols, name)
+        flat = {k: cols.pop(k) for k in ("order", "hidden", "sort") if k in cols}
+        for name in ("Torbox", "Real-Debrid"):  # the two services version 1 knew
+            cols.setdefault(name, json.loads(json.dumps(flat)))
         cfg["columns"] = cols
     cfg.pop("keys_in_keyring", None)  # option removed
     cfg["config_version"] = EMPTY_CONFIG["config_version"]
@@ -118,24 +94,35 @@ def migrate_config(cfg):
 
 
 def load_config():
+    """config.json with defaults filled in. A file that is not a usable JSON object is moved to config.json.bad,
+    so the next save cannot overwrite what may still hold the keys."""
     try:
         with open(CONFIG) as f:
-            cfg = {**EMPTY_CONFIG, **migrate_config(json.load(f))}
-    except (OSError, ValueError):
+            raw = json.load(f)
+        if not isinstance(raw, dict):
+            raise ValueError("config is not a JSON object")
+        return {**EMPTY_CONFIG, **migrate_config(raw)}
+    except OSError:
         return dict(EMPTY_CONFIG)
-    if _import_keys_from_keyring(cfg):
-        save_config(cfg)
-    return cfg
+    except (ValueError, TypeError):
+        try:
+            os.replace(CONFIG, CONFIG + ".bad")
+            log_event("", f"{CONFIG} is not valid JSON; moved to config.json.bad, starting with defaults", "error")
+        except OSError:
+            pass
+        return dict(EMPTY_CONFIG)
 
 
 def save_config(cfg):
-    """Write config.json with mode 600 in a 700 directory. Keys are kept here and nowhere else."""
-    on_disk = {k: v for k, v in cfg.items() if not k.startswith("_")}
+    """Write config.json with mode 600 in a 700 directory, atomically: temp file then rename, so a crash mid-write
+    keeps the previous file. Keys are kept here and nowhere else."""
     os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
     os.chmod(CONFIG_DIR, 0o700)
-    fd = os.open(CONFIG, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    tmp = CONFIG + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
-        json.dump(on_disk, f)
+        json.dump(cfg, f)
+    os.replace(tmp, CONFIG)
 
 
 def run_async(fn, on_done):
@@ -157,18 +144,26 @@ def copy_text(text):
     cb.store()
 
 
+def is_http(url):
+    """True for an http(s) URL string: the only kind of link that may reach a player, aria2c/wget, xdg-open or a fetch."""
+    return isinstance(url, str) and url.lower().startswith(("http://", "https://"))
+
+
 def add_label(text):
-    """Short human name for a just-added magnet, file path or link (for notifications)."""
+    """Short human name for a just-added magnet, file path or link (for notifications and the log)."""
     if text.lower().startswith("magnet:"):
         dn = parse_qs(urlparse(text).query).get("dn")
         if dn:
             return dn[0][:60]
+    if is_http(text):
+        p = urlparse(text)
+        text = p.path.rstrip("/") or p.netloc  # never the query: tracker passkeys live there
     return (os.path.basename(text.rstrip("/")) or text)[:60]
 
 
 def open_url(url):
     """Hand an http(s) URL to the browser. Anything else (file:, javascript:, flags) is refused."""
-    if not isinstance(url, str) or not url.lower().startswith(("http://", "https://")):
+    if not is_http(url):
         return False
     subprocess.Popen(["xdg-open", url])
     return True
@@ -179,7 +174,7 @@ def add_one(client, item):
     low = item.lower()
     if low.startswith("magnet:"):
         client.add_magnet(item)
-    elif low.startswith(("http://", "https://")) and low.split("?")[0].endswith(".torrent"):
+    elif is_http(item) and low.split("?")[0].endswith(".torrent"):
         data = fetch_bytes(item, TORRENT_MAX)  # a .torrent URL: fetch it (public hosts only), upload the file
         with tempfile.NamedTemporaryFile(suffix=".torrent", delete=False) as f:
             f.write(data)
@@ -187,7 +182,7 @@ def add_one(client, item):
             client.add_torrent_file(f.name)
         finally:
             os.unlink(f.name)
-    elif low.startswith(("http://", "https://")):
+    elif is_http(item):
         return client.add_link(item)
     elif low.endswith(".torrent"):
         client.add_torrent_file(item)
@@ -200,10 +195,16 @@ def find_player():
     return next((p for p in PLAYERS if shutil.which(p)), None)
 
 
-def video_links(links):
-    """Playable entries from a links() result: video files first, else any real file but the zip bundle."""
-    usable = [l for l in links if l["url"] and not l["name"].startswith("All files")]
-    return [l for l in usable if l["name"].lower().endswith(VIDEO_EXT)] or usable
+def usable_links(links):
+    """Entries of a links() result that have a URL, minus the zip bundle."""
+    return [l for l in links if l["url"] and not l["name"].startswith("All files")]
+
+
+def video_links(links, strict=False):
+    """Playable entries: the video files; unless strict, any usable file when there is no video."""
+    usable = usable_links(links)
+    vids = [l for l in usable if l["name"].lower().endswith(VIDEO_EXT)]
+    return vids if strict else vids or usable
 
 
 def days_until(date_str):
@@ -216,7 +217,7 @@ def days_until(date_str):
 
 def pick_subtitle(video_name, links):
     """URL of the subtitle that matches the video's name; else the only subtitle; else None."""
-    subs = [l for l in links if l.get("url") and l["name"].lower().endswith(SUB_EXT)]
+    subs = [l for l in links if is_http(l.get("url")) and l["name"].lower().endswith(SUB_EXT)]  # else a bare {sub} could pass a flag
     stem = os.path.splitext(os.path.basename(video_name))[0].lower()
     for s in subs:
         if os.path.splitext(os.path.basename(s["name"]))[0].lower().startswith(stem):
@@ -307,14 +308,18 @@ class MergedClient:
 
 
 def download_command(urls, dest, tool):
-    """argv for a resumable bulk download into dest with aria2c (8 connections) or wget."""
+    """argv for a resumable bulk download into dest with aria2c (one file per URL, 8 connections each) or wget;
+    [] without URLs. Only http(s) URLs are passed on: anything else from a service could be read as a flag."""
+    urls = [u for u in urls if is_http(u)]
+    if not urls:
+        return []
     if tool == "aria2c":
-        return ["aria2c", "-c", "-x", "8", "-s", "8", f"--dir={dest}", *urls]
+        return ["aria2c", "-c", "-Z", "-x", "8", "-s", "8", f"--dir={dest}", *urls]
     return ["wget", "-c", "-P", dest, *urls]
 
 
 def safe_dirname(name):
-    return re.sub(r"[^\w.\- \[\]()]", "_", name).strip()[:120] or "download"
+    return re.sub(r"[^\w.\- \[\]()]", "_", name).strip(" .")[:120] or "download"  # "." / ".." would escape the folder
 
 
 def plan_color(plan):
@@ -341,7 +346,7 @@ def totals_text(torrents, shown, ticked):
         return "0 items"
     down = sum(t["speed"] or 0 for t in torrents)
     up = sum(t["up_speed"] or 0 for t in torrents)
-    active = sum(1 for t in torrents if not t["done"])
+    active = sum(1 for t in torrents if is_active(t))
     size = sum(t["size"] or 0 for t in torrents)
     parts = [f"⬇ {human_size(down)}/s", f"⬆ {human_size(up)}/s", f"{active} active", f"{len(torrents)} items", human_size(size)]
     if shown != len(torrents):
@@ -405,22 +410,27 @@ def is_public_host(host):
         return False
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+        if not ip.is_global or ip.is_multicast or ip.is_reserved:  # is_global also excludes 100.64/10 (CGNAT, Tailscale)
             return False
     return bool(infos)
 
 
 def fetch_bytes(url, max_bytes, allow_private=False):
     """GET a URL with a hard size cap. Redirects are followed by hand so every hop gets the same checks:
-    http(s) only, and no private/loopback hosts unless the caller trusts the URL (feeds typed into Settings)."""
-    import requests
-    from urllib.parse import urljoin
+    http(s) only, and no private/loopback hosts unless the caller trusts the URL (feeds typed into Settings).
+    The host is taken from urllib3's parser, the one requests connects with, so the two cannot disagree
+    (urlparse reads 'http://127.0.0.1:9\\@public/x' as public, urllib3 connects to 127.0.0.1).
+    Errors name the host only: tracker URLs carry passkeys.
+    ponytail: the name is resolved twice (check, then connect), so a DNS-rebinding host still gets one blind GET;
+    the 20 s timeout is per read, so a server that trickles bytes can hold the worker for a long time."""
+    host = ""
     try:
         for _hop in range(5):
-            parts = urlparse(url)
+            parts = parse_url(url)
+            host = (parts.host or "").strip("[]")
             if parts.scheme not in ("http", "https"):
-                raise ApiError(f"unsupported URL scheme in {url[:60]}")
-            if not allow_private and not is_public_host(parts.hostname or ""):
+                raise ApiError(f"unsupported URL scheme {parts.scheme!r} at {host or 'unknown host'}")
+            if not allow_private and not is_public_host(host):
                 raise ApiError("refusing to fetch from a private or local address")
             with requests.get(url, timeout=20, stream=True, allow_redirects=False,
                               headers={"User-Agent": "debrid-applet"}) as r:
@@ -428,19 +438,23 @@ def fetch_bytes(url, max_bytes, allow_private=False):
                     url = urljoin(url, r.headers.get("Location", ""))
                     continue
                 r.raise_for_status()
-                data = b""
+                data = bytearray()
                 for chunk in r.iter_content(65536):
                     data += chunk
                     if len(data) > max_bytes:
-                        raise ApiError(f"{url} is larger than {max_bytes // 1_000_000} MB")
-                return data
+                        raise ApiError(f"{host}: file larger than {max_bytes // 1_000_000} MB")
+                return bytes(data)
         raise ApiError("too many redirects")
+    except ValueError as e:  # urllib3 or requests could not parse the URL; their text repeats it whole
+        raise ApiError(f"fetch failed: malformed URL ({host or 'no host'})") from e
     except requests.RequestException as e:
-        raise ApiError(f"fetch failed: {e}") from e
+        raise ApiError(f"fetch failed: {re.sub(r'url: \S+', 'url: ' + host, str(e))}") from e
 
 
 def parse_feed(xml_text):
     """RSS/Atom items -> (guid, title, link) where link is a magnet, a .torrent URL or the item link."""
+    if "<!ENTITY" in xml_text:  # feeds need no DTD, and entity declarations are the only expansion primitive
+        return []
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError:
@@ -469,7 +483,7 @@ def parse_feed_lines(text):
         if not line or line.startswith("#"):
             continue
         parts = [p.strip() for p in line.split("|")]
-        if parts[0].lower().startswith(("http://", "https://")):
+        if is_http(parts[0]):
             feeds.append((parts[0], parts[1] if len(parts) > 1 else "", parts[2] if len(parts) > 2 else ""))
     return feeds
 
@@ -506,14 +520,9 @@ def merge_active(full, active):
     by_id = {t["id"]: t for t in active}
     merged = [by_id.pop(t["id"], t) for t in full]
     merged = list(by_id.values()) + merged  # brand-new active items go first
-    was_active = {t["id"] for t in full if not t["done"]}
+    was_active = {t["id"] for t in full if is_active(t)}
     now_active = {t["id"] for t in active}
     return merged, bool(was_active - now_active)
-
-
-def strict_videos(links):
-    """Only real video files with a URL (no fallback to other files)."""
-    return [l for l in links if l["url"] and l["name"].lower().endswith(VIDEO_EXT)]
 
 
 def magnet_for(hash_, name):
@@ -537,10 +546,8 @@ def drop_items(uris, text):
 
 
 def aria2_command(urls, dest):
-    """Shell command that downloads the URLs with aria2c, resumable, 8 connections each."""
-    if not urls:
-        return ""
-    return f"aria2c -c -x 8 -s 8 --dir={shlex.quote(dest)} " + " ".join(shlex.quote(u) for u in urls)
+    """download_command(..., "aria2c") as one shell line for the clipboard; '' without URLs."""
+    return shlex.join(download_command(urls, dest, "aria2c"))
 
 
 def icon_button(icon, tip, cb):
@@ -565,8 +572,9 @@ def should_log(level, setting):
 
 
 def append_log(path, service, message, max_bytes=LOG_MAX):
-    """One human-readable line per event; the file is trimmed to its newest fifth when it grows past max_bytes."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    """One human-readable line per event; the file is trimmed to its newest fifth when it grows past max_bytes.
+    Mode 600: the log holds item names, feed hosts and error text."""
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
     try:
         if os.path.getsize(path) > max_bytes:
             with open(path, "rb") as f:
@@ -574,16 +582,17 @@ def append_log(path, service, message, max_bytes=LOG_MAX):
                 tail = f.read().split(b"\n", 1)[-1]
             with open(path, "wb") as f:
                 f.write(tail)
+        os.chmod(path, 0o600)  # files made by older versions
     except OSError:
         pass
-    with open(path, "a", encoding="utf-8") as f:
+    with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "a", encoding="utf-8") as f:
         f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {service:<12} {message}\n")
 
 
 def read_log_tail(path, lines=500):
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
-            return "".join(f.readlines()[-lines:])
+            return "".join(collections.deque(f, maxlen=lines))
     except OSError:
         return ""
 
@@ -606,13 +615,17 @@ def notify(title, body, actions=()):
     note = Notify.Notification.new(title, body, APP_ID)
     for label, cb in actions:
         note.add_action(label.lower().replace(" ", "-"), label, lambda _n, _a, *_, cb=cb: cb())
-    note.show()
+    try:
+        note.show()
+    except GLib.Error as e:  # no notification daemon on this session; the log line above has the text
+        log_event("", f"notification failed: {e}", "error")
     if actions:
         _NOTES.append(note)
         del _NOTES[:-20]
     return note
 
 
+@functools.lru_cache(maxsize=8192)
 def local_time(iso):
     """'2026-10-10T19:52:35.000Z' (UTC) -> '2026-10-10 21:52' in the local zone; '' when absent or odd."""
     dt = _parse_iso(iso) if iso else None
@@ -692,7 +705,7 @@ STORE_TYPES = (str, str, int, str, str, str, bool,  # 0 id, 1 name, 2 progress, 
                str, str, str, str, str, str, str,   # 7 dl, 8 ul, 9 seeds, 10 peers, 11 ratio, 12 added, 13 finished
                float, float, float, int, int, float,  # 14 size, 15 dl, 16 ul, 17 seeds, 18 peers, 19 ratio (raw)
                str, str, str, str)  # 20 added, 21 finished (absolute local time), 22 hash, 23 service
-CHECKED, STATUS_HOLD = 6, 8
+CHECKED, STATUS_HOLD = 6, 8  # store column of the checkbox; seconds an action message stays before polls overwrite it
 NUMERIC = ("dl", "ul", "seeds", "peers", "ratio", "size")  # right-aligned
 WIDTHS = {"check": 28, "service": 95, "name": 120, "dl": 85, "ul": 85, "progress": 90, "seeds": 60, "peers": 60, "ratio": 60,
           "state": 140, "size": 85, "added": 115, "finished": 115}  # starting widths; Name grows to fill
@@ -713,11 +726,7 @@ DEFAULT_HIDDEN = {"Real-Debrid": ["ul", "peers", "ratio"], "AllDebrid": ["peers"
 
 
 def column_layout(columns, name):
-    """Layout dict for one service inside cfg['columns']; migrates the old shared format in place."""
-    if any(k in columns for k in ("order", "hidden", "sort")):
-        flat = {k: columns.pop(k) for k in ("order", "hidden", "sort") if k in columns}
-        for n in ("Torbox", "Real-Debrid"):
-            columns.setdefault(n, json.loads(json.dumps(flat)))
+    """Layout dict for one service inside cfg['columns'], created with that service's defaults."""
     layout = columns.setdefault(name, {"order": [], "hidden": list(DEFAULT_HIDDEN.get(name, []))})
     layout.setdefault("sort", ["added", "desc"])  # newest first until the user picks another header
     return layout
@@ -726,7 +735,7 @@ def column_layout(columns, name):
 def state_kind(state):
     """Bucket a raw service state string into a PALETTE key."""
     s = state.lower()
-    if any(w in s for w in ("error", "dead", "virus")):
+    if any(w in s for w in ("error", "dead", "virus", "failed")):
         return "error"
     if "stalled" in s or "paused" in s:
         return "warn"
@@ -736,7 +745,12 @@ def state_kind(state):
         return "seed"
     if any(w in s for w in ("download", "metadl", "checking", "queue", "magnet", "waiting", "compressing", "adding")):
         return "active"
-    return "done"  # store column of the checkbox; seconds an action message stays before polls overwrite it
+    return "done"  # unknown and finished-looking states ("Ready", "") count as done
+
+
+def is_active(t):
+    """Still being worked on: not finished and not failed (a failed item never finishes, but needs no fast polls)."""
+    return not t["done"] and state_kind(t.get("state", "")) != "error"
 
 
 class ServiceTab(Gtk.Box):
@@ -751,6 +765,7 @@ class ServiceTab(Gtk.Box):
         self._known = set()
         self._anchor = None  # row index of the last checkbox click, for shift-click ranges
         self._iters = {}  # id -> TreeIter of rows currently in the store, for in-place updates
+        self._vals = {}  # id -> the row values last written, so a poll only touches cells that changed
         self._shown_key = None  # (filter text, state filter) the store was last built for
         self.errors = []  # (time, message) of the last few failures, shown as the status line's tooltip
         self.active = 0
@@ -759,6 +774,7 @@ class ServiceTab(Gtk.Box):
         self._hold_until = 0
         self._width_timer = 0  # debounce for saving dragged column widths
         self._updated_at = 0  # time of the last successful poll, shown in the footer
+        self._poll_every = app._interval  # seconds between polls, shown in the footer
         self._last_full = 0  # time of the last full-list poll
         self._account = None  # last account dict, reused on active-only polls
 
@@ -899,7 +915,7 @@ class ServiceTab(Gtk.Box):
 
     def _update_poll_label(self):
         when = time.strftime("%H:%M:%S", time.localtime(self._updated_at)) if self._updated_at else "never"
-        self.poll_label.set_text(f"updated {when} · every {getattr(self, '_poll_every', POLL_SLOW)} s")
+        self.poll_label.set_text(f"updated {when} · every {self._poll_every} s")
 
     def _update_account(self, account):
         plan = GLib.markup_escape_text(account["plan"])
@@ -911,7 +927,7 @@ class ServiceTab(Gtk.Box):
         visible_ids = {r[0] for r in self.store}
         self.totals_label.set_text(totals_text(self.torrents, len(self.store), len(self.checked & visible_ids)))
 
-    # ----- column layout (shared by both tabs through the config) -----
+    # ----- column layout (one per service, kept in the config) -----
     def apply_columns(self):
         cfg = column_layout(self.app.cfg.setdefault("columns", {}), self.name)
         self._applying = True
@@ -1082,6 +1098,8 @@ class ServiceTab(Gtk.Box):
         if error and (not self.errors or self.errors[-1][1] != msg):
             self.errors = (self.errors + [(time.strftime("%H:%M:%S"), msg)])[-8:]
             self.status.set_tooltip_text("Recent errors:\n" + "\n".join(f"{t}  {m}" for t, m in self.errors))
+        if error and msg == INVALID_KEY:
+            self.app.open_settings_once()
 
     def _run(self, fn, cb):
         """Run a network action; show errors in the status label; then cb(result, error)."""
@@ -1092,8 +1110,6 @@ class ServiceTab(Gtk.Box):
             self._busy(False)
             if err:
                 self.say(err, error=True)
-                if err == INVALID_KEY:
-                    self.app.open_settings_once()
             cb(res, err)
         run_async(fn, done)
 
@@ -1101,9 +1117,7 @@ class ServiceTab(Gtk.Box):
     def render(self, account, torrents, error):
         if error:
             self.account_label.set_markup(red(error))
-            self.say(error, error=True)  # also logged as an error
-            if error == INVALID_KEY:
-                self.app.open_settings_once()
+            self.say(error, error=True)  # also logged; an invalid key opens Settings from there
             return
         self._account = account
         self._update_account(account)
@@ -1120,7 +1134,7 @@ class ServiceTab(Gtk.Box):
         self._known = ids
         self.checked &= ids
         self._fill()
-        self.active = sum(1 for t in torrents if not t["done"])
+        self.active = sum(1 for t in torrents if is_active(t))
         log_event(self.name, f"Poll: {len(torrents)} items, {self.active} active", "verbose")
         self._updated_at = time.time()
         self._update_poll_label()
@@ -1147,17 +1161,16 @@ class ServiceTab(Gtk.Box):
         def start(links, err):
             if err:
                 return
-            usable = [l for l in links if l["url"] and not l["name"].startswith("All files")]
-            if self.app.cfg.get("auto_download_videos_only"):
-                usable = [l for l in usable if l["name"].lower().endswith(VIDEO_EXT)] or usable
-            urls = [l["url"] for l in usable]
+            usable = video_links(links) if self.app.cfg.get("auto_download_videos_only") else usable_links(links)
+            urls = [l["url"] for l in usable if is_http(l["url"])]
             if not urls:
                 self.say(f"Auto-download: no links for {t['name'][:40]}", error=True)
                 return
             os.makedirs(dest, exist_ok=True)
-            os.makedirs(DATA_DIR, exist_ok=True)
-            log = open(os.path.join(DATA_DIR, f"download-{safe_dirname(t['name'])[:40]}.log"), "ab")
-            proc = subprocess.Popen(download_command(urls, dest, tool), stdout=log, stderr=log)
+            os.makedirs(DATA_DIR, mode=0o700, exist_ok=True)
+            log_path = os.path.join(DATA_DIR, f"download-{safe_dirname(t['name'])[:40]}.log")
+            with open(os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "ab") as log:
+                proc = subprocess.Popen(download_command(urls, dest, tool), stdout=log, stderr=log)
             self.say(f"Auto-download: {len(urls)} file(s) via {tool} into {dest}")
             notify(f"{self.name}: downloading {len(urls)} file(s)", dest)
 
@@ -1204,23 +1217,25 @@ class ServiceTab(Gtk.Box):
             wanted = {t["id"] for t in rows}
             for tid in [tid for tid in self._iters if tid not in wanted]:
                 self.store.remove(self._iters.pop(tid))
+                self._vals.pop(tid, None)
             for t in rows:
                 values = self._row_values(t)
+                old, self._vals[t["id"]] = self._vals.get(t["id"]), values
                 it = self._iters.get(t["id"])
                 if it is None:
                     self._iters[t["id"]] = self.store.append(values)
                     continue
-                current = self.store[it]
-                changed = [i for i, v in enumerate(values) if i != CHECKED and current[i] != v]
+                changed = [i for i, v in enumerate(values) if i != CHECKED and (old is None or old[i] != v)]
                 if changed:
                     self.store.set(it, changed, [values[i] for i in changed])
         else:
             selected = self._selected()
             self.store.clear()
-            self._iters = {}
+            self._iters, self._vals = {}, {}
             self._anchor = None
             for t in rows:
-                self._iters[t["id"]] = self.store.append(self._row_values(t))
+                self._vals[t["id"]] = values = self._row_values(t)
+                self._iters[t["id"]] = self.store.append(values)
             if selected and selected["id"] in self._iters:
                 self.view.get_selection().select_iter(self._iters[selected["id"]])
             self._shown_key = (q, kind)
@@ -1373,7 +1388,7 @@ class ServiceTab(Gtk.Box):
                 msg += " · failed: " + "; ".join(errors)
             if retry and attempt < 3:
                 msg += f" · retrying {len(retry)} in 60 s ({attempt}/3)"
-                GLib.timeout_add_seconds(60, lambda: self.add_items(list(retry), None, attempt + 1) and False)
+                GLib.timeout_add_seconds(60, lambda: self.add_items(list(retry), after, attempt + 1) and False)
             self.say(msg, error=bool(errors))
             for name in added:  # show something at once; the real row replaces it on the next poll
                 self._pending.append((time.monotonic() + 30, {
@@ -1387,7 +1402,7 @@ class ServiceTab(Gtk.Box):
                     break
             self.app.refresh()
             GLib.timeout_add_seconds(3, lambda: self.app.refresh() and False)  # services list new items with a lag
-            if after:
+            if after and not (retry and attempt < 3):  # with a retry pending, report once, after the last attempt
                 after(added, errors)
         self._run(work, done)
 
@@ -1540,7 +1555,7 @@ class ServiceTab(Gtk.Box):
         def decide(links, err):
             if err:
                 return
-            vids = strict_videos(links) if self.app.player else []
+            vids = video_links(links, strict=True) if self.app.player else []
             if vids and cfg.get("dblclick_play"):
                 self._play_one_of(vids, links)
             elif vids and not cfg.get("dblclick_asked"):
@@ -1571,10 +1586,14 @@ class ServiceTab(Gtk.Box):
 
     def play_all(self, urls):
         custom = (self.app.cfg.get("player_command") or "").strip()
-        urls = [u for u in urls if u and u.lower().startswith(("http://", "https://"))]
+        urls = [u for u in urls if is_http(u)]
         if custom:
-            for u in urls:  # one invocation per file; the target decides how to queue
-                subprocess.Popen(custom_cmd(custom, u))
+            try:
+                for u in urls:  # one invocation per file; the target decides how to queue
+                    subprocess.Popen(custom_cmd(custom, u))
+            except (OSError, ValueError) as e:
+                self.say(f"Custom play command failed: {e}", error=True)
+                return
             self.say(f"Sent {len(urls)} files to: {custom.split()[0]}")
             return
         if not self.app.player:
@@ -1588,7 +1607,7 @@ class ServiceTab(Gtk.Box):
         A custom command in Settings (Stremio, Kodi, Jellyfin, anything) replaces the detected player."""
         custom = (self.app.cfg.get("player_command") or "").strip()
         if custom:
-            if not url or not url.lower().startswith(("http://", "https://")):
+            if not is_http(url):
                 return
             sub_url = pick_subtitle(name, links) if links else None
             try:
@@ -1600,7 +1619,7 @@ class ServiceTab(Gtk.Box):
         if not self.app.player:
             self.say("No media player found (mpv, vlc, celluloid, smplayer or totem)")
             return
-        if not url or not url.lower().startswith(("http://", "https://")):
+        if not is_http(url):
             return
         sub_url = pick_subtitle(name, links) if links else None
         subprocess.Popen(player_cmd(self.app.player, url, sub_url))
@@ -1649,7 +1668,7 @@ class ServiceTab(Gtk.Box):
             if not rows:
                 _m, it = view.get_selection().get_selected()
                 rows = [store[it]] if it else list(store)
-            return [r[3] for r in rows if r[3]]
+            return [r[3] for r in rows if is_http(r[3])]
 
         def copy():
             urls = chosen()
@@ -1686,7 +1705,10 @@ class ServiceTab(Gtk.Box):
                 for link in self.client.links(t["id"], t["kind"]):
                     if link["name"].startswith("All files"):
                         continue
-                    (urls if link["url"] else errors).append(link["url"] or link["name"])
+                    if is_http(link["url"]):
+                        urls.append(link["url"])
+                    else:
+                        errors.append(link["name"])
             return urls, errors
         self._run(work, lambda res, err: None if err else done(*res))
 
@@ -1711,7 +1733,7 @@ class ServiceTab(Gtk.Box):
         self._collect_links(done)
 
     def on_control(self, op):
-        """Torbox pause / resume / reannounce on every target."""
+        """Torbox resume / stop seeding / reannounce on every target."""
         targets = self._targets()
         if not targets:
             return
@@ -1783,7 +1805,12 @@ class App:
         Gtk.Window.set_default_icon_name(APP_ID)
         self.cfg = load_config()
         self.apply_log_settings()
-        self.lock = threading.Lock()
+        try:  # logs live here; keep them to this user (also fixes directories made by older versions)
+            os.makedirs(DATA_DIR, mode=0o700, exist_ok=True)
+            os.chmod(DATA_DIR, 0o700)
+        except OSError:
+            pass
+        self._polling = False  # a poll is in flight; refresh() then only asks for another one afterwards
         self._refresh_again = False
         self._timer = 0
         self._interval = POLL_SLOW
@@ -1820,7 +1847,7 @@ class App:
         self.window.add(self.notebook)
         self.build_tabs()
 
-        if not any(self.cfg[k] for k in ("torbox_key", "realdebrid_key", "alldebrid_key")):
+        if not any(self.cfg[k] for k in KEY_FIELDS):
             self.open_settings()
         self.refresh()  # every poll schedules the next one (see _schedule)
         self.watcher.start()
@@ -1830,12 +1857,7 @@ class App:
     def build_tabs(self):
         for page in list(self.notebook.get_children()):
             self.notebook.remove(page)
-        self.tabs = [
-            ServiceTab("Torbox", Torbox(self.cfg["torbox_key"]) if self.cfg["torbox_key"] else None, self),
-            ServiceTab("Real-Debrid",
-                       RealDebrid(self.cfg["realdebrid_key"]) if self.cfg["realdebrid_key"] else None, self),
-            ServiceTab("AllDebrid", AllDebrid(self.cfg["alldebrid_key"]) if self.cfg["alldebrid_key"] else None, self),
-        ]
+        self.tabs = [ServiceTab(cls.name, cls(self.cfg[key]) if self.cfg[key] else None, self) for cls, key in CLIENTS]
         if sum(1 for t in self.tabs if t.client) > 1:
             self.tabs.insert(0, ServiceTab("All", MergedClient(lambda: self.tabs), self))
         for tab in self.tabs:
@@ -1868,7 +1890,8 @@ class App:
         run_async(lambda: route_items(items, checker), done)
 
     def tab_named(self, name):
-        return next((t for t in self.tabs if t.name == name), None)
+        """The configured tab called name; None when there is no such tab or it has no key."""
+        return next((t for t in self.tabs if t.name == name and t.client), None)
 
     def start_api(self):
         if self.api:
@@ -1882,14 +1905,19 @@ class App:
             save_config(self.cfg)
 
         def on_add(service, items):
-            tab = self.tab_named(service) or next((t for t in self.tabs if t.client and not t.is_merged), None)
-            if tab is None or tab.client is None:
-                return 0
-            log_event(tab.name, f"Local API: {len(items)} item(s) queued")
-            if service:
-                GLib.idle_add(tab.add_items, list(items))
-            else:  # no service named: cached-on-Torbox routing, else the first configured tab
-                GLib.idle_add(self.add_routed, list(items), tab)
+            """Server thread: only check that a target exists; everything else hops to the main loop."""
+            tab = self.tab_named(service) if service else next((t for t in self.tabs if t.client and not t.is_merged), None)
+            if tab is None:
+                return 0  # unknown or unconfigured service: refuse rather than guess
+
+            def go():
+                target = self.tab_named(tab.name) or tab  # Settings may have rebuilt the tabs meanwhile
+                log_event(target.name, f"Local API: {len(items)} item(s) queued")
+                if service:
+                    target.add_items(list(items))
+                else:  # no service named: cached-on-Torbox routing, else the first configured tab
+                    self.add_routed(list(items), target)
+            GLib.idle_add(go)
             return len(items)
 
         def status():
@@ -1958,10 +1986,10 @@ class App:
 
     def refresh(self, *_):
         """Poll every configured service once. Returns True so GLib keeps the timer."""
-        if not self.lock.acquire(blocking=False):
+        if self._polling:
             self._refresh_again = True  # a poll is running; go again right after it
             return True
-        self._refresh_again = False
+        self._polling, self._refresh_again = True, False
         tabs = [t for t in self.tabs if t.client is not None]
         for t in tabs:
             t.set_polling(True)
@@ -1984,6 +2012,8 @@ class App:
         def fetch():
             results = []
             for t in tabs:
+                if t.is_merged:
+                    continue  # built from the other tabs' lists once those are rendered
                 try:
                     results.append((t, *fetch_one(t), None))
                 except ApiError as e:
@@ -1993,17 +2023,23 @@ class App:
             return results
 
         def done(results, _err):
-            self.lock.release()
+            self._polling = False
             for t in tabs:
                 t.set_polling(False)
-            for t, acc, tors, e in results or []:
-                t.render(acc, tors, e)
-            active = sum(t.active for t in self.tabs if not t.is_merged)  # the All tab mirrors the others
-            self.icon.set_label(f"{active}↓" if active else "")
-            self.icon.set_tooltip_text(f"Debrid · {active} item(s) still downloading · polling every {self._interval} s")
-            self._schedule(POLL_FAST if active or any(t._pending for t in self.tabs) else POLL_SLOW)
-            if self._refresh_again:
-                self.refresh()
+            try:
+                for t, acc, tors, e in results or []:
+                    if t in self.tabs:  # not a tab that Settings replaced while the poll ran
+                        t.render(acc, tors, e)
+                for t in self.tabs:
+                    if t.is_merged:  # no network: merges the lists rendered just above
+                        t.render(t.client.account(), t.client.torrents(), None)
+            finally:  # a failing render must never stop the polling cycle
+                active = sum(t.active for t in self.tabs if not t.is_merged)  # the All tab mirrors the others
+                self.icon.set_label(f"{active}↓" if active else "")
+                self.icon.set_tooltip_text(f"Debrid · {active} item(s) still downloading · polling every {self._interval} s")
+                self._schedule(POLL_FAST if active or any(t._pending for t in self.tabs) else POLL_SLOW)
+                if self._refresh_again:
+                    self.refresh()
         run_async(fetch, done)
         return True
 
@@ -2037,7 +2073,7 @@ class App:
         tab.apply_columns()
 
     def open_settings_once(self):
-        key = (self.cfg["torbox_key"], self.cfg["realdebrid_key"])
+        key = tuple(self.cfg[k] for k in KEY_FIELDS)
         if self._settings_shown_for != key:
             self._settings_shown_for = key
             self.open_settings()
@@ -2059,13 +2095,13 @@ class App:
 
         def clear(*_):
             try:
-                open(LOG_FILE, "w").close()
+                os.truncate(LOG_FILE, 0)
             except OSError:
                 pass
             load()
         actions = Gtk.Box(spacing=6)
         actions.pack_start(text_button("view-refresh-symbolic", "Refresh", load), False, False, 0)
-        actions.pack_start(text_button("document-open-symbolic", "Open file", lambda *_: open_url("file://" + LOG_FILE) or subprocess.Popen(["xdg-open", LOG_FILE])), False, False, 0)
+        actions.pack_start(text_button("document-open-symbolic", "Open file", lambda *_: subprocess.Popen(["xdg-open", LOG_FILE])), False, False, 0)
         actions.pack_start(text_button("edit-clear-symbolic", "Clear", clear), False, False, 0)
         box.pack_start(actions, False, False, 0)
         dlg.add_button("Close", Gtk.ResponseType.CLOSE)
@@ -2245,8 +2281,7 @@ class SettingsForm:
         return out
 
     def test_keys(self, result):
-        clients = [(cls, self.entries[key].get_text().strip())
-                   for cls, key in ((Torbox, "torbox_key"), (RealDebrid, "realdebrid_key"), (AllDebrid, "alldebrid_key"))]
+        clients = [(cls, self.entries[key].get_text().strip()) for cls, key in CLIENTS]
 
         def work():
             parts = []
@@ -2276,26 +2311,32 @@ class FeedWatcher:
 
     def __init__(self, app):
         self.app = app
-        self._timer = 0
+        self._timer = self._first = 0
 
     def start(self):
-        if self._timer:
-            GLib.source_remove(self._timer)
-            self._timer = 0
+        for timer in (self._timer, self._first):  # saving Settings twice must not leave two passes running
+            if timer:
+                GLib.source_remove(timer)
+        self._timer = self._first = 0
         feeds = parse_feed_lines(self.app.cfg.get("feeds"))
         if not feeds:
             return
         minutes = max(1, int(self.app.cfg.get("feed_interval_min") or 15))
         self._timer = GLib.timeout_add_seconds(minutes * 60, self._tick)
-        GLib.timeout_add_seconds(5, lambda: self.check() and False)  # first pass shortly after start
+        self._first = GLib.timeout_add_seconds(5, self._first_pass)  # first pass shortly after start
 
     def _tick(self):
         self.check()
         return True
 
+    def _first_pass(self):
+        self._first = 0
+        self.check()
+        return False
+
     def check(self):
         feeds = parse_feed_lines(self.app.cfg.get("feeds"))
-        seen = set(self.app.cfg.get("feed_seen") or [])
+        seen = dict.fromkeys(self.app.cfg.get("feed_seen") or [])  # insertion-ordered, so the trim below drops the oldest
 
         def work():
             found, errors = [], []
@@ -2303,14 +2344,15 @@ class FeedWatcher:
                 try:  # feeds are typed into Settings by the user, so local servers are allowed; size is capped
                     text = fetch_bytes(url, FEED_MAX, allow_private=True).decode("utf-8", "replace")
                 except ApiError as e:
-                    errors.append(f"{url}: {e}")
+                    errors.append(f"{urlparse(url).hostname}: {e}")
                     continue
                 for guid, title, link in parse_feed(text):
                     key = f"{url}#{guid}"
                     if key in seen or not feed_matches(title, pattern):
                         continue
-                    if not (link.lower().startswith("magnet:") or link.lower().split("?")[0].endswith(".torrent")):
-                        continue  # plain page links can't be added
+                    low = link.lower()
+                    if not (low.startswith("magnet:") or (is_http(link) and low.split("?")[0].endswith(".torrent"))):
+                        continue  # plain page links can't be added; a local path must not come from a feed
                     found.append((key, title, link, service))
             return found, errors
 
@@ -2326,17 +2368,20 @@ class FeedWatcher:
                 return
             by_tab = {}
             for key, title, link, service in found:
-                tab = self.app.tab_named(service) or next((t for t in self.app.tabs if t.client and not t.is_merged), None)
-                if tab is None:
+                tab = self.app.tab_named(service) if service else next((t for t in self.app.tabs if t.client and not t.is_merged), None)
+                if tab is None:  # named service without a key: left unseen, picked up once the key is set
+                    log_event("", f"RSS: {service or 'no service'} is not configured, skipped {title}", "verbose")
                     continue
                 by_tab.setdefault(tab, []).append(link)
-                seen.add(key)
+                seen[key] = None
                 log_event(tab.name, f"RSS: {title}")
+            if not by_tab:
+                return
             self.app.cfg["feed_seen"] = list(seen)[-2000:]
             save_config(self.app.cfg)
             for tab, links in by_tab.items():
                 tab.add_items(links)
-            notify("RSS", f"{len(found)} new item(s) matched")
+            notify("RSS", f"{sum(len(l) for l in by_tab.values())} new item(s) matched")
         run_async(work, done)
         return True
 
@@ -2419,8 +2464,9 @@ def main():
         if opts["log"]:
             app.open_log()
         if opts["items"]:
-            tab = app.tab_named(opts["service"]) or next((t for t in app.tabs if t.client and not t.is_merged), None)
+            tab = app.tab_named(opts["service"]) if opts["service"] else next((t for t in app.tabs if t.client and not t.is_merged), None)
             if tab is None:
+                log_event("", f"Command line: {opts['service'] or 'no service'} is not configured, {len(opts['items'])} item(s) dropped", "error")
                 return 1
             log_event(tab.name, f"Command line: {len(opts['items'])} item(s)")
             if opts["service"]:

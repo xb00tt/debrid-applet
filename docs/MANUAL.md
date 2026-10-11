@@ -5,7 +5,7 @@ Everything the applet does, in detail. For installing and the basics see the [RE
 ## Tray icon
 
 - Left-click: show / hide the window. Right-click: Refresh, Settings…, Quit.
-- Label next to the icon (e.g. `32↓`) is how many items across all services are not finished yet; hover for details.
+- Label next to the icon (e.g. `32↓`) is how many items across all services are still being worked on (failed items are not counted); hover for details.
 - Only one instance runs; launching the applet again just raises the window.
 
 ## Adding things
@@ -61,15 +61,18 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
   Torbox already has cached to Torbox and the rest to the current tab.
 - **RSS watch lists.** Settings takes feeds, one per line as `url | regex | service` (regex and service optional;
   the regex is matched case-insensitively against the item title). Every N minutes (default 15) new matching items
-  whose link is a magnet or a `.torrent` file are added to that service; `.torrent` URLs are fetched and uploaded.
+  whose link is a magnet or a `.torrent` file are added to that service (a service without a key is skipped until
+  you add one); `.torrent` URLs are fetched and uploaded.
   Seen items are remembered so nothing is added twice. Fetches are capped at 5 MB; `.torrent` URLs are only
-  fetched from public hosts (feeds you configure may live on your LAN).
+  fetched from public hosts (feeds you configure may live on your LAN). The activity log never records a feed or
+  .torrent URL's query string, where tracker passkeys live.
 
 ### Integration
 
 - **Local API.** Set a port in Settings (0 = off); the applet listens on `127.0.0.1` only and generates a
   random token, shown in Settings. Every call must carry it as `?token=…` or an `X-Debrid-Token` header, so a
-  web page cannot drive the applet behind your back. `/add` accepts `magnet:` and `http(s)://` items only.
+  web page cannot drive the applet behind your back. `/add` accepts `magnet:` and `http(s)://` items only; a
+  `service` that is unknown or has no key gets a 400.
 
       curl 'http://127.0.0.1:PORT/add?token=TOKEN&service=Torbox&magnet=magnet:?xt=urn:btih:…'
       curl -H 'X-Debrid-Token: TOKEN' -X POST --data-binary @links.txt 'http://127.0.0.1:PORT/add?service=AllDebrid'
@@ -88,7 +91,8 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
       python3 ~/.local/share/debrid-applet/debrid_applet.py --service Torbox --add 'magnet:?xt=…' 'https://hoster/file'
       debrid-applet --version          # (the .deb puts `debrid-applet` on PATH; 1.0.0 hangs here while running, fixed after)
 
-  Without `--service`, cached-on-Torbox routing applies. Bind `--toggle` to a Cinnamon keyboard shortcut for a global hotkey.
+  Without `--service`, cached-on-Torbox routing applies; `--service` naming a service without a key adds nothing and
+  exits 1. Bind `--toggle` to a Cinnamon keyboard shortcut for a global hotkey.
 - **Send to.** Right-click → Send to → another service re-adds the ticked items there by magnet (not from AllDebrid, which gives no hashes).
 - **Export / import.** The ⋮ menu in the toolbar exports every item's magnet (`magnet<TAB>name` per line) to a file,
   imports such a file (or any file with one magnet or link per line), or copies all magnets to the clipboard.
@@ -143,6 +147,6 @@ Notifications, clipboard watcher and remembered filter are on by default; everyt
 - **Two tray icons**: one is a leftover from an instance that was killed mid-poll; it disappears on the next restart
   of the applet, or restart Cinnamon (Ctrl+Alt+Esc on Mint).
 - **Window gone**: left-click the tray icon, run the script again, or `--toggle`.
-- **Something failed silently**: `Ctrl+L` opens the activity log; `~/.local/share/debrid-applet/applet.log` has the
-  process's own stderr.
+- **Something failed silently**: `Ctrl+L` opens the activity log; the process's own stderr lands in the session log
+  (`journalctl --user -b` on systemd sessions, `~/.xsession-errors` on others).
 

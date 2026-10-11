@@ -37,6 +37,8 @@ class LocalApi:
         api = self
 
         class Handler(BaseHTTPRequestHandler):
+            timeout = 10  # a client that stalls mid-request frees its thread instead of pinning it
+
             def log_message(self, *_):  # keep the applet log quiet
                 pass
 
@@ -54,7 +56,7 @@ class LocalApi:
                     self._send(403, {"ok": False, "error": "loopback only"})
                     return False
                 given = self.headers.get("X-Debrid-Token") or (parse_qs(query).get("token") or [""])[0]
-                if not api.token or not hmac.compare_digest(given, api.token):
+                if not api.token or not hmac.compare_digest(given.encode(), api.token.encode()):  # str form rejects non-ASCII
                     self._send(401, {"ok": False, "error": "missing or wrong token (X-Debrid-Token header or ?token=)"})
                     return False
                 return True
@@ -68,7 +70,10 @@ class LocalApi:
                     bad = [i for i in items if not _remote_ok(i)]
                     if not items or bad:
                         return self._send(400, {"ok": False, "error": "give magnet: or http(s):// items only"})
-                    return self._send(200, {"ok": True, "queued": api.on_add(service, items)})
+                    queued = api.on_add(service, items)
+                    if not queued:
+                        return self._send(400, {"ok": False, "error": f"unknown or unconfigured service {service!r}"})
+                    return self._send(200, {"ok": True, "queued": queued})
                 if url.path == "/toggle":
                     api.on_toggle()
                     return self._send(200, {"ok": True})
@@ -80,7 +85,10 @@ class LocalApi:
                 self._route("")
 
             def do_POST(self):
-                length = int(self.headers.get("Content-Length") or 0)
+                try:
+                    length = max(0, int(self.headers.get("Content-Length") or 0))
+                except ValueError:
+                    return self._send(400, {"ok": False, "error": "bad Content-Length"})
                 self._route(self.rfile.read(min(length, 1_000_000)).decode("utf-8", "replace") if length else "")
 
         self.server = ThreadingHTTPServer(("127.0.0.1", self.port), Handler)

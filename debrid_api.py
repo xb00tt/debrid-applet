@@ -1,4 +1,4 @@
-"""Thin clients for Real-Debrid and Torbox. No GTK here; safe to import anywhere."""
+"""Thin clients for Torbox, Real-Debrid and AllDebrid. No GTK here; safe to import anywhere."""
 import base64
 import os
 import re
@@ -41,6 +41,14 @@ def human_size(n):
     return f"{n:.1f} PB"
 
 
+def _num(v, cast=int):
+    """int/float of a service field; 0 for missing, null or junk, so one odd row cannot sink a whole poll."""
+    try:
+        return cast(v or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 class _Client:
     BASE = ""
     name = ""
@@ -53,8 +61,8 @@ class _Client:
     def _req(self, method, path, **kw):
         try:
             r = self.s.request(method, self.BASE + path, timeout=TIMEOUT, **kw)
-        except requests.RequestException as e:
-            raise ApiError(f"Network error: {e}") from e
+        except requests.RequestException as e:  # the text embeds the URL, and Torbox puts the key in a query param
+            raise ApiError(f"Network error: {str(e).replace(self.token, '***') if self.token else e}") from e
         if r.status_code == 401:
             raise ApiError(INVALID_KEY)
         if r.status_code == 403:
@@ -87,12 +95,12 @@ def _direct_url(u):
 
 
 def _iso_from_ts(ts):
-    """Unix seconds -> '2025-10-09T08:53:20Z'; '' for 0 / missing."""
+    """Unix seconds -> '2025-10-09T08:53:20Z'; '' for 0 / missing / junk."""
     try:
         ts = int(ts or 0)
-    except (TypeError, ValueError):
+        return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if ts > 0 else ""
+    except (TypeError, ValueError, OverflowError, OSError):
         return ""
-    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if ts > 0 else ""
 
 
 def _is_auth_error(body):
@@ -136,8 +144,8 @@ class RealDebrid(_Client):
 
     def torrents(self, active_only=False):
         out = []
-        items, page = [], 1
-        while True:  # 5000 is the API maximum per page; keep going while pages come back full
+        items = []
+        for page in range(1, 41):  # 5000 is the API maximum per page; stop at the first short page (or 200 000 items)
             params = {"limit": 5000, "page": page}
             if active_only:
                 params["filter"] = "active"
@@ -145,8 +153,9 @@ class RealDebrid(_Client):
             items += chunk
             if len(chunk) < 5000:
                 break
-            page += 1
         for t in items:
+            if t.get("id") is None:
+                continue
             state = t.get("status", "")
             if state == "waiting_files_selection":
                 try:
@@ -156,12 +165,12 @@ class RealDebrid(_Client):
             out.append({
                 "id": str(t["id"]),
                 "name": t.get("filename", ""),
-                "progress": float(t.get("progress") or 0),
+                "progress": _num(t.get("progress"), float),
                 "state": state,
                 "done": t.get("status") == "downloaded",
-                "size": int(t.get("bytes") or 0),
-                "seeds": int(t.get("seeders") or 0),
-                "speed": int(t.get("speed") or 0),
+                "size": _num(t.get("bytes")),
+                "seeds": _num(t.get("seeders")),
+                "speed": _num(t.get("speed")),
                 "kind": "torrent",
                 "up_speed": None,  # Real-Debrid does not report these three
                 "peers": None,
@@ -197,7 +206,7 @@ class RealDebrid(_Client):
                 out.append({"name": f"Failed: {e}", "url": None})
                 break  # keep what we have; retrying immediately would only add more 429s
             try:
-                out.append({"name": u.get("filename") or link, "url": _direct_url(u), "size": int(u.get("filesize") or 0)})
+                out.append({"name": u.get("filename") or link, "url": _direct_url(u), "size": _num(u.get("filesize"))})
             except ApiError as e:
                 out.append({"name": f"{u.get('filename') or link}: {e}", "url": None})
         return out
@@ -216,7 +225,7 @@ class Torbox(_Client):
         if not isinstance(body, dict):
             raise ApiError(f"Unexpected response from {self.name}")
         if not body.get("success"):
-            if body.get("error") in TORBOX_AUTH_ERRORS:
+            if _is_auth_error(body):
                 raise ApiError(INVALID_KEY)
             raise ApiError(body.get("detail") or body.get("error") or "Torbox error")
         return body
@@ -236,21 +245,23 @@ class Torbox(_Client):
         out = []
         for kind, path in (("torrent", "/torrents/mylist"), ("webdl", "/webdl/mylist")):
             for t in self._json("GET", path, params={"bypass_cache": "true", "limit": 5000}) or []:
+                if t.get("id") is None:
+                    continue
                 state = t.get("download_state") or ""
                 done = bool(t.get("download_finished")) and bool(t.get("download_present"))
                 out.append({
                     "id": str(t["id"]),
                     "name": t.get("name", ""),
-                    "progress": min(100.0, float(t.get("progress") or 0) * 100),  # API gives 0..1
+                    "progress": min(100.0, _num(t.get("progress"), float) * 100),  # API gives 0..1
                     "state": state if kind == "torrent" else f"web: {state}",
                     "done": done,
-                    "size": int(t.get("size") or 0),
-                    "seeds": int(t.get("seeds") or 0),
-                    "speed": int(t.get("download_speed") or 0),
+                    "size": _num(t.get("size")),
+                    "seeds": _num(t.get("seeds")),
+                    "speed": _num(t.get("download_speed")),
                     "kind": kind,
-                    "up_speed": int(t.get("upload_speed") or 0),
-                    "peers": int(t.get("peers") or 0),
-                    "ratio": float(t.get("ratio") or 0),
+                    "up_speed": _num(t.get("upload_speed")),
+                    "peers": _num(t.get("peers")),
+                    "ratio": _num(t.get("ratio"), float),
                     "added": t.get("created_at") or "",
                     "finished": (t.get("updated_at") or "") if done else "",  # no finish timestamp in the API
                     "hash": t.get("hash") or "",
@@ -286,17 +297,19 @@ class Torbox(_Client):
         if len(files) > 1:  # one request for everything, before the per-file ones
             try:
                 zip_url = self._json("GET", dl_path, params={"token": self.token, id_key: int(tid), "zip_link": "true"})
-                out.append({"name": "All files (zip)", "url": zip_url, "size": int(item.get("size") or 0)})
+                out.append({"name": "All files (zip)", "url": zip_url, "size": _num(item.get("size"))})
             except ApiError as e:
                 out.append({"name": f"Zip failed: {e}", "url": None})
         for f in files:
+            if f.get("id") is None:
+                continue
             try:
                 url = self._json("GET", dl_path, params={"token": self.token, id_key: int(tid), "file_id": f["id"]})
             except ApiError as e:
                 out.append({"name": f"Failed: {e}", "url": None})
                 break
             out.append({"name": f.get("short_name") or f.get("name") or str(f["id"]), "url": url,
-                        "size": int(f.get("size") or 0)})
+                        "size": _num(f.get("size"))})
         return out
 
     def add_link(self, url):
@@ -326,7 +339,7 @@ def _flatten_files(nodes, prefix=""):
         if "e" in node:
             yield from _flatten_files(node["e"], name + "/")
         elif node.get("l"):
-            yield name, int(node.get("s") or 0), node["l"]
+            yield name, _num(node.get("s")), node["l"]
 
 
 class AllDebrid(_Client):
@@ -361,10 +374,12 @@ class AllDebrid(_Client):
         out = []
         kw = {"data": {"status": "active"}} if active_only else {}
         for m in self._call("POST", "/v4.1/magnet/status", **kw).get("magnets") or []:
-            code = int(m.get("statusCode") or 0)
-            size = int(m.get("size") or 0)
+            if m.get("id") is None:
+                continue
+            code = _num(m.get("statusCode"))
+            size = _num(m.get("size"))
             done = code == 4
-            progress = 100.0 if done else (100.0 * int(m.get("downloaded") or 0) / size if size else 0.0)
+            progress = 100.0 if done else (100.0 * _num(m.get("downloaded")) / size if size else 0.0)
             status = m.get("status") or ""
             out.append({
                 "id": str(m["id"]),
@@ -373,10 +388,10 @@ class AllDebrid(_Client):
                 "state": f"error: {status}" if code >= 5 else status,
                 "done": done,
                 "size": size,
-                "seeds": int(m.get("seeders") or 0),
-                "speed": int(m.get("downloadSpeed") or 0),
+                "seeds": _num(m.get("seeders")),
+                "speed": _num(m.get("downloadSpeed")),
                 "kind": "torrent",
-                "up_speed": int(m.get("uploadSpeed") or 0),
+                "up_speed": _num(m.get("uploadSpeed")),
                 "peers": None,
                 "ratio": None,
                 "added": _iso_from_ts(m.get("uploadDate")),
@@ -412,7 +427,7 @@ class AllDebrid(_Client):
             except ApiError as e:
                 out.append({"name": f"Failed: {e}", "url": None})
                 break
-            out.append({"name": name, "url": u.get("link"), "size": int(u.get("filesize") or size)})
+            out.append({"name": name, "url": u.get("link"), "size": _num(u.get("filesize")) or size})
         return out
 
     def add_link(self, url):
