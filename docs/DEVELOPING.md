@@ -41,8 +41,9 @@ a GitHub release with generated notes. `packaging/build-deb.sh` also works local
 
 The applet's update check reads `releases/latest`: keep the tag `vX.Y.Z` and the asset names
 `debrid-applet_X.Y.Z_all.deb` and `debrid-applet-X.Y.Z.tar.gz` (both produced by the workflow); GitHub computes the
-`digest` the applet verifies. Drafts and prereleases are invisible to it. A per-user install updates from the tarball,
-so `debrid_update.FILES` and the copy list in `install.sh` must stay the same five files.
+`digest` the applet verifies. Drafts and prereleases are invisible to it. A per-user install updates from the tarball:
+it takes every `.py` and `.svg` directly under the archive root (tests excluded), so a new module travels with the
+release; `debrid_update.FILES` is the required minimum and must match the copy list in `install.sh` (a test checks).
 
 
 ## Adding a service

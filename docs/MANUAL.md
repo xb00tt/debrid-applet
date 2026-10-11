@@ -100,10 +100,11 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 - **Updates.** Once a day (and 60 s after start) the applet asks GitHub for the latest release and, when it is newer,
   shows a notification with Update / Release notes / Skip this version. Right-click the tray icon → **Check for
   updates…** (or the button in About) checks at once. Update downloads the release, verifies it against the checksum
-  GitHub publishes, and installs it: the `.deb` through `apt-get` behind one password prompt, a `./install.sh` copy by
-  replacing its files, a git checkout only tells you to `git pull`. Then it offers to restart. Turn the daily check
-  off under Settings → Advanced. Nothing is ever installed without your click; failed installs leave the file in
-  `~/.local/share/debrid-applet/updates/` and offer the `sudo apt install` line to copy.
+  GitHub publishes, and installs it: the `.deb` through `apt-get` behind one password prompt (the checksum is checked
+  again as root, on a private copy, right before the install), a `./install.sh` copy by replacing its files, a git
+  checkout only tells you to `git pull`. Then it offers to restart. Turn the daily check off under Settings →
+  Advanced. Nothing is ever installed without your click; a cancelled password prompt just stops, and an `apt-get`
+  failure leaves the file in `~/.local/share/debrid-applet/updates/` and offers the `sudo apt install` line to copy.
 - **Send to.** Right-click → Send to → another service re-adds the ticked items there by magnet (not from AllDebrid, which gives no hashes).
 - **Export / import.** The ⋮ menu in the toolbar exports every item's magnet (`magnet<TAB>name` per line) to a file,
   imports such a file (or any file with one magnet or link per line), or copies all magnets to the clipboard.

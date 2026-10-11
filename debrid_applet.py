@@ -1850,6 +1850,7 @@ class App:
             pass
         self._polling = False  # a poll is in flight; refresh() then only asks for another one afterwards
         self.restart_requested = False  # set by restart(); main() re-execs this file after the main loop ends
+        self._updating = ""  # version an update_to() is working on, until it finishes or fails
         self._refresh_again = False
         self._timer = 0
         self._interval = POLL_SLOW
@@ -2191,6 +2192,9 @@ class App:
         v = ".".join(map(str, release.version))
         mode = install_mode(HERE)
         tab = self.current_tab()
+        if self._updating:  # a second Update click while the first runs would download onto the same file
+            tab.say(f"Update to {self._updating} already in progress")
+            return
         if mode == "git":
             self._dialog(f"Debrid Applet {v} is available", f"This is a git checkout: run git pull in {HERE}.")
             return
@@ -2199,9 +2203,11 @@ class App:
             self._dialog("No package in this release", f"Release {v} has no {'.deb' if mode == 'deb' else 'tarball'} for this install.")
             return
         updates = os.path.join(DATA_DIR, "updates")
+        self._updating = v
         tab.say(f"Downloading update {v}…")
 
         def installed(err=None, path=None):
+            self._updating = ""
             if err:
                 tab.say(f"Update failed: {err}", error=True)
                 self._dialog("Update failed", err)
@@ -2227,7 +2233,7 @@ class App:
             log_path = os.path.join(updates, "apt.log")
             try:
                 with open(os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "ab") as log:
-                    proc = subprocess.Popen(deb_command(path), stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+                    proc = subprocess.Popen(deb_command(path, asset.digest), stdin=subprocess.DEVNULL, stdout=log, stderr=log)
             except OSError as e:
                 installed(f"cannot run pkexec: {e.strerror}")
                 return
@@ -2235,7 +2241,9 @@ class App:
             def finished(code):
                 if code == 0:
                     installed(None, path)
-                elif code in (126, 127):  # pkexec: dismissed or not authorised
+                    return
+                self._updating = ""
+                if code in (126, 127):  # pkexec: dismissed or not authorised
                     tab.say("Update cancelled: authentication did not complete", error=True)
                 else:
                     tab.say(f"Update failed: apt-get exited {code}, see {log_path}", error=True)

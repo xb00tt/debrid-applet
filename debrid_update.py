@@ -87,9 +87,20 @@ def install_mode(here):
     return "user"
 
 
-def deb_command(path):
-    """argv that installs the downloaded .deb behind one polkit password prompt; no shell anywhere."""
-    return ["pkexec", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "--no-install-recommends", path]
+DEB_SCRIPT = """set -e
+t=$(mktemp --suffix=.deb)
+trap 'rm -f "$t"' EXIT
+cp "$1" "$t"
+echo "$2  $t" | sha256sum -c --quiet
+apt-get install -y --no-install-recommends "$t"
+"""
+
+
+def deb_command(path, digest):
+    """argv that, behind one polkit password prompt, copies the .deb to a root-owned temp file, checks that copy's
+    sha256 and installs it. Verifying as root closes the window in which the user-owned file could be swapped
+    after download() checked it. The script is a constant; path and digest are positional parameters."""
+    return ["pkexec", "env", "DEBIAN_FRONTEND=noninteractive", "sh", "-c", DEB_SCRIPT, "sh", path, digest.removeprefix("sha256:")]
 
 
 def download(asset, dest_dir, session=None):
@@ -136,20 +147,27 @@ def _unlink(path):
 
 
 def install_user(tar_path, here):
-    """Replace FILES in here with the copies inside the release tarball (members <prefix>/<name>), one atomic
-    rename per file. Members are read by exact name; nothing else in the archive is looked at."""
+    """Replace the program files in here with the copies inside the release tarball: every regular member directly
+    under the archive prefix whose name ends in .py or .svg (tests excluded), so a module the new version adds
+    travels with it; FILES is the required minimum. All files are staged as <name>.tmp first, then renamed, so a
+    failure leaves the installed version untouched. Members are read by name; nothing else is extracted."""
     with tarfile.open(tar_path, "r:gz") as tar:
-        members = {m.name.split("/", 1)[1]: m for m in tar.getmembers() if m.isfile() and "/" in m.name}
+        members = {m.name.split("/", 1)[1]: m for m in tar.getmembers()
+                   if m.isfile() and m.name.count("/") == 1 and m.name.endswith((".py", ".svg"))
+                   and not m.name.split("/", 1)[1].startswith("test_")}
         missing = [n for n in FILES if n not in members]
         if missing:
             raise ApiError(f"Release tarball lacks {', '.join(missing)}")
-        for name in FILES:
-            data = tar.extractfile(members[name]).read()
-            tmp = os.path.join(here, name + ".tmp")
-            try:
+        staged = []
+        try:
+            for name, member in members.items():
+                tmp = os.path.join(here, name + ".tmp")
                 with open(tmp, "wb") as f:
-                    f.write(data)
-                os.replace(tmp, os.path.join(here, name))
-            except OSError as e:
+                    f.write(tar.extractfile(member).read())
+                staged.append((tmp, os.path.join(here, name)))
+        except OSError as e:
+            for tmp, _dst in staged:
                 _unlink(tmp)
-                raise ApiError(f"Cannot write {name}: {e.strerror}") from e
+            raise ApiError(f"Cannot write {name}: {e.strerror}") from e
+    for tmp, dst in staged:  # renames inside one directory that just accepted every write
+        os.replace(tmp, dst)

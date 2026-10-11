@@ -604,11 +604,15 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
 def test_open_url_only_http():
     import debrid_applet
     calls = []
+    real_popen = debrid_applet.subprocess.Popen  # the module attribute is the global subprocess module: restore it
     debrid_applet.subprocess.Popen = lambda args, **kw: calls.append(args)
-    assert debrid_applet.open_url("https://cdn.example/file.mkv") is True
-    assert debrid_applet.open_url("http://cdn.example/f") is True
-    for bad in ("file:///etc/passwd", "javascript:alert(1)", "-x", "", None):
-        assert debrid_applet.open_url(bad) is False
+    try:
+        assert debrid_applet.open_url("https://cdn.example/file.mkv") is True
+        assert debrid_applet.open_url("http://cdn.example/f") is True
+        for bad in ("file:///etc/passwd", "javascript:alert(1)", "-x", "", None):
+            assert debrid_applet.open_url(bad) is False
+    finally:
+        debrid_applet.subprocess.Popen = real_popen
     assert calls == [["xdg-open", "https://cdn.example/file.mkv"], ["xdg-open", "http://cdn.example/f"]]
 
 
@@ -1096,9 +1100,30 @@ def test_update_install_mode_and_deb_command():
     os.makedirs(os.path.join(root, "git", ".git"))
     os.makedirs(os.path.join(root, "user"))
     assert du.install_mode(os.path.join(root, "git")) == "git" and du.install_mode(os.path.join(root, "user")) == "user"
-    assert du.deb_command("/home/u/.local/share/debrid-applet/updates/x.deb") == [
-        "pkexec", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "--no-install-recommends",
-        "/home/u/.local/share/debrid-applet/updates/x.deb"]
+    argv = du.deb_command("/home/u/.local/share/debrid-applet/updates/x.deb", "sha256:" + "c" * 64)
+    assert argv[:6] == ["pkexec", "env", "DEBIAN_FRONTEND=noninteractive", "sh", "-c", du.DEB_SCRIPT]
+    assert argv[6:] == ["sh", "/home/u/.local/share/debrid-applet/updates/x.deb", "c" * 64]
+    assert "$1" in du.DEB_SCRIPT and "$2" in du.DEB_SCRIPT and "x.deb" not in du.DEB_SCRIPT  # parameters, not interpolation
+    # the script itself, with apt-get faked: installs a root-side copy only when the copy's sha256 matches
+    import hashlib, subprocess
+    root = "/tmp/debrid-test-deb"
+    shutil.rmtree(root, ignore_errors=True)
+    os.makedirs(os.path.join(root, "bin"))
+    fake_apt = os.path.join(root, "bin", "apt-get")
+    open(fake_apt, "w").write('#!/bin/sh\necho "$@" > ' + os.path.join(root, "apt-args") + '\ncp "$4" ' + os.path.join(root, "installed") + '\n')
+    os.chmod(fake_apt, 0o755)
+    deb = os.path.join(root, "x.deb")
+    open(deb, "wb").write(b"deb-bytes")
+    env = {**os.environ, "PATH": os.path.join(root, "bin") + ":" + os.environ["PATH"]}
+    run = lambda digest: subprocess.run(du.deb_command(deb, digest)[3:], env=env, capture_output=True, text=True)
+    r = run("sha256:" + hashlib.sha256(b"deb-bytes").hexdigest())
+    assert r.returncode == 0, r.stderr
+    args = open(os.path.join(root, "apt-args")).read().split()
+    assert args[:3] == ["install", "-y", "--no-install-recommends"] and args[3].endswith(".deb") and args[3] != deb  # a copy
+    assert open(os.path.join(root, "installed"), "rb").read() == b"deb-bytes" and not os.path.exists(args[3])  # copy removed after
+    os.remove(os.path.join(root, "apt-args"))
+    r = run("sha256:" + "0" * 64)
+    assert r.returncode != 0 and not os.path.exists(os.path.join(root, "apt-args"))  # wrong digest: apt-get never runs
     assert du.FILES == ("debrid_api.py", "debrid_local_api.py", "debrid_update.py", "debrid_applet.py", "debrid-applet.svg")
 
 
@@ -1179,10 +1204,12 @@ def test_update_install_user_from_tarball():
             for info in extra:
                 tar.addfile(info, io.BytesIO(b"evil") if info.isfile() else None)
     good = os.path.join(root, "good.tar.gz")
-    build(good, du.FILES)
+    build(good, du.FILES + ("debrid_extra.py", "test_debrid_api.py", "docs/MANUAL.md", "packaging/build-deb.sh"))
     du.install_user(good, here)
-    for name in du.FILES:
+    for name in du.FILES + ("debrid_extra.py",):  # a module added by the new version travels with it
         assert open(os.path.join(here, name)).read() == f"new {name}" and not os.path.exists(os.path.join(here, name + ".tmp"))
+    assert sorted(os.listdir(here)) == sorted(du.FILES + ("debrid_extra.py",))  # tests, docs, packaging: not installed
+    assert all(f'"$SRC/{n}"' in open("install.sh").read() for n in du.FILES)  # the per-user copy list ships the same files
     # a member that escapes the prefix and a symlink member are ignored: only the five names are ever read
     evil = tarfile.TarInfo("debrid-applet-9.9.9/../evil.py"); evil.size = 4
     link = tarfile.TarInfo("debrid-applet-9.9.9/debrid_api.py"); link.type = tarfile.SYMTYPE; link.linkname = "/etc/passwd"
@@ -1194,6 +1221,15 @@ def test_update_install_user_from_tarball():
     except ApiError as e:
         assert "debrid_api.py" in str(e)
     assert not os.path.exists(os.path.join(root, "evil.py")) and open(os.path.join(here, "debrid_api.py")).read() == "new debrid_api.py"
+    os.makedirs(os.path.join(here, "debrid_update.py.tmp"))  # something in the way of the third file's staging write
+    try:
+        du.install_user(good, here)
+        assert False
+    except ApiError as e:
+        assert "debrid_update.py" in str(e)
+    assert all(open(os.path.join(here, n)).read() == f"new {n}" for n in du.FILES)  # all-or-nothing: nothing replaced
+    assert not any(n.endswith(".tmp") and n != "debrid_update.py.tmp" for n in os.listdir(here))  # staged files cleaned up
+    os.rmdir(os.path.join(here, "debrid_update.py.tmp"))
     ro = os.path.join(root, "ro")
     os.makedirs(ro)
     os.chmod(ro, 0o500)
