@@ -14,6 +14,5 @@ Known ceilings from the 2026-10-11 security/refactor audit (accepted for now, ea
 - `fetch_bytes` gives up after a 90 s total deadline, but the thread stuck on a trickling server lives until the server lets go.
 - `parse_feed` falls back to the stdlib parser (with the `<!ENTITY` guard) when python3-defusedxml is missing, i.e. on
   `install.sh` installs that never installed it.
-- Signed releases: the self-updater verifies the digest GitHub publishes, which covers integrity, not a compromised account.
 - `fetch_bytes` (feeds, `.torrent` URLs) ignores `http_proxy` / `https_proxy`: pinning an address and a proxy exclude each
   other. The service clients and the updater use requests and still honour them.

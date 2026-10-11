@@ -40,9 +40,16 @@ Bump `VERSION` in `debrid_applet.py`, tag `vX.Y.Z` and push the tag. The release
 tag that doesn't match `VERSION`, builds the `.deb` (via `packaging/build-deb.sh`) and a source tarball, and publishes
 a GitHub release with generated notes. `packaging/build-deb.sh` also works locally on any Debian-based box.
 
+Releases are signed: the workflow signs the `.deb` and the tarball with OpenSSH signatures (`ssh-keygen -Y sign`,
+namespace `debrid-applet`) using the `RELEASE_SIGNING_KEY` repository secret (the private half of
+`~/.ssh/debrid-release-key` on the release machine; keep a backup, nothing else can sign a release the applet accepts),
+publishes the `.sig` files next to the assets and checks them against `debrid_update.SIGNING_KEYS` before publishing.
+The applet refuses an update without a valid signature. To rotate the key: add the new public key to `SIGNING_KEYS`,
+release that with the old key, then replace the secret and drop the old key in a later release.
+
 The applet's update check reads `releases/latest`: keep the tag `vX.Y.Z` and the asset names
-`debrid-applet_X.Y.Z_all.deb` and `debrid-applet-X.Y.Z.tar.gz` (both produced by the workflow); GitHub computes the
-`digest` the applet verifies. Drafts and prereleases are invisible to it. A per-user install updates from the tarball:
+`debrid-applet_X.Y.Z_all.deb` and `debrid-applet-X.Y.Z.tar.gz` plus their `.sig` files (all produced by the workflow);
+GitHub computes the `digest` the applet verifies. Drafts and prereleases are invisible to it. A per-user install updates from the tarball:
 it takes every `.py` and `.svg` directly under the archive root (tests excluded), so a new module travels with the
 release; `debrid_update.FILES` is the required minimum and must match the copy list in `install.sh` (a test checks).
 

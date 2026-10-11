@@ -4,7 +4,9 @@ The latest GitHub release is the source of truth. Assets are fetched through the
 digest GitHub publishes in the same JSON. Nothing here needs credentials."""
 import hashlib
 import os
+import subprocess
 import tarfile
+import tempfile
 from dataclasses import dataclass
 
 import requests
@@ -15,6 +17,10 @@ REPO = "xb00tt/debrid-applet"
 API = f"https://api.github.com/repos/{REPO}/releases/latest"
 FILES = ("debrid_api.py", "debrid_local_api.py", "debrid_update.py", "debrid_applet.py", "debrid-applet.svg")  # what install.sh copies
 TIMEOUT = 15
+# Releases are signed with OpenSSH signatures (ssh-keygen -Y sign); any of these public keys may have signed one.
+# Rotation: ship the new key here in a release signed by the old one, then sign with the new one.
+SIGNING_KEYS = ("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBqWO2K0QoJHnjZ3kxzI+XVafzggQGw/WEnYWh64xjzZ",)
+SIGN_NAMESPACE = "debrid-applet"
 
 
 @dataclass
@@ -32,6 +38,8 @@ class Release:
     notes_url: str
     deb: Asset | None
     tar: Asset | None
+    deb_sig: Asset | None = None  # the .sig files published next to the assets
+    tar_sig: Asset | None = None
 
 
 def parse_version(text):
@@ -72,10 +80,27 @@ def latest_release(current, session=None):
     if mine is None or version <= mine:
         return None
     assets = [_asset(a) for a in body.get("assets") or [] if isinstance(a, dict)]
+    pick = lambda suffix: next((a for a in assets if a.name.endswith(suffix)), None)
     return Release(version=version, tag=str(body.get("tag_name")),
                    notes_url=str(body.get("html_url") or f"https://github.com/{REPO}/releases"),
-                   deb=next((a for a in assets if a.name.endswith("_all.deb")), None),
-                   tar=next((a for a in assets if a.name.endswith(".tar.gz")), None))
+                   deb=pick("_all.deb"), tar=pick(".tar.gz"), deb_sig=pick("_all.deb.sig"), tar_sig=pick(".tar.gz.sig"))
+
+
+def verify_signature(path, sig_path, keys=SIGNING_KEYS, tool="ssh-keygen"):
+    """ssh-keygen -Y verify of path against sig_path with the project keys; ApiError when it does not verify.
+    Runs before anything is installed, on the very file the install then uses."""
+    with tempfile.NamedTemporaryFile("w", suffix=".allowed_signers", delete=False) as allowed:
+        allowed.write("".join(f"{SIGN_NAMESPACE} {k}\n" for k in keys))
+    try:
+        with open(path, "rb") as data:
+            result = subprocess.run([tool, "-Y", "verify", "-f", allowed.name, "-I", SIGN_NAMESPACE, "-n", SIGN_NAMESPACE,
+                                     "-s", sig_path], stdin=data, capture_output=True, text=True)
+    except OSError as e:
+        raise ApiError(f"Cannot verify the signature: {e.strerror}") from e
+    finally:
+        _unlink(allowed.name)
+    if result.returncode != 0:
+        raise ApiError("Release is not signed by the project key; not installing")
 
 
 def install_mode(here):

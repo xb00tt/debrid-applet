@@ -26,6 +26,17 @@ jobs:
           packaging/build-deb.sh
           git archive --format=tar.gz --prefix="debrid-applet-${GITHUB_REF_NAME#v}/" -o "dist/debrid-applet-${GITHUB_REF_NAME#v}.tar.gz" "${GITHUB_REF_NAME}"
           ls -l dist
+      - name: Sign the assets and check them against the key built into the applet
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          test -n "$RELEASE_SIGNING_KEY" || { echo "RELEASE_SIGNING_KEY secret is missing"; exit 1; }
+          umask 077
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > "$RUNNER_TEMP/release-key"
+          for f in dist/*.deb dist/*.tar.gz; do ssh-keygen -Y sign -f "$RUNNER_TEMP/release-key" -n debrid-applet "$f"; done
+          shred -u "$RUNNER_TEMP/release-key"
+          for f in dist/*.deb dist/*.tar.gz; do python3 -c "import sys, debrid_update as du; du.verify_signature(sys.argv[1], sys.argv[1] + '.sig'); print('verified', sys.argv[1])" "$f"; done
+          ls -l dist
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}

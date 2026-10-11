@@ -1199,6 +1199,10 @@ RELEASE_JSON = {
          "size": 1000, "digest": "sha256:" + "a" * 64},
         {"name": "debrid-applet_9.9.9_all.deb", "url": "https://api.github.com/repos/xb00tt/debrid-applet/releases/assets/2",
          "size": 2000, "digest": "sha256:" + "b" * 64},
+        {"name": "debrid-applet_9.9.9_all.deb.sig", "url": "https://api.github.com/repos/xb00tt/debrid-applet/releases/assets/3",
+         "size": 300, "digest": "sha256:" + "c" * 64},
+        {"name": "debrid-applet-9.9.9.tar.gz.sig", "url": "https://api.github.com/repos/xb00tt/debrid-applet/releases/assets/4",
+         "size": 300, "digest": "sha256:" + "d" * 64},
     ],
 }
 
@@ -1213,6 +1217,9 @@ def test_update_parse_version_and_latest_release():
     assert rel.version == (9, 9, 9) and rel.tag == "v9.9.9" and rel.notes_url.endswith("/tag/v9.9.9")
     assert rel.deb.name == "debrid-applet_9.9.9_all.deb" and rel.deb.size == 2000 and rel.deb.digest == "sha256:" + "b" * 64
     assert rel.deb.url.endswith("/assets/2") and rel.tar.name == "debrid-applet-9.9.9.tar.gz"
+    assert rel.deb_sig.name == "debrid-applet_9.9.9_all.deb.sig" and rel.tar_sig.name == "debrid-applet-9.9.9.tar.gz.sig"
+    unsigned = du.latest_release("1.0.3", FakeSession(FakeResp(200, {**RELEASE_JSON, "assets": RELEASE_JSON["assets"][:2]})))
+    assert unsigned.deb is not None and unsigned.deb_sig is None and unsigned.tar_sig is None
     method, url, kw = s.calls[0]
     assert (method, url) == ("GET", du.API) and kw["headers"]["Accept"] == "application/vnd.github+json"
     assert kw["headers"]["User-Agent"] == "debrid-applet/1.0.3" and kw["timeout"] == 15
@@ -1242,6 +1249,42 @@ def test_update_parse_version_and_latest_release():
         assert False
     except ApiError as e:
         assert "unexpected response" in str(e)
+
+
+def test_update_verify_signature():
+    import os, shutil, subprocess
+    import debrid_update as du
+    root = "/tmp/debrid-test-sign"
+    shutil.rmtree(root, ignore_errors=True)
+    os.makedirs(root)
+    for name in ("good", "other"):  # throwaway ed25519 keys, like the release key but never leaving this test
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", os.path.join(root, name)], check=True)
+    key = open(os.path.join(root, "good.pub")).read().strip()
+    assert du.SIGNING_KEYS and all(k.startswith("ssh-ed25519 ") for k in du.SIGNING_KEYS)  # the project key is embedded
+    path = os.path.join(root, "release.deb")
+    open(path, "wb").write(b"deb-bytes")
+    subprocess.run(["ssh-keygen", "-Y", "sign", "-f", os.path.join(root, "good"), "-n", du.SIGN_NAMESPACE, path], check=True, capture_output=True)
+    du.verify_signature(path, path + ".sig", keys=(key,))  # a good signature passes quietly
+    du.verify_signature(path, path + ".sig", keys=("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA old", key))  # any embedded key
+    for label, fn in (("tampered file", lambda: open(path, "ab").write(b"!")),
+                      ("another key", lambda: open(path, "wb").write(b"deb-bytes"))):
+        fn()
+        keys = (key,) if label == "tampered file" else (open(os.path.join(root, "other.pub")).read().strip(),)
+        try:
+            du.verify_signature(path, path + ".sig", keys=keys)
+            assert False, label
+        except ApiError as e:
+            assert "not signed by the project key" in str(e), (label, str(e))
+    try:
+        du.verify_signature(path, os.path.join(root, "missing.sig"), keys=(key,))
+        assert False
+    except ApiError as e:
+        assert "not signed by the project key" in str(e)
+    try:
+        du.verify_signature(path, path + ".sig", keys=(key,), tool="/nonexistent/ssh-keygen")
+        assert False
+    except ApiError as e:
+        assert "Cannot verify" in str(e)
 
 
 def test_update_install_mode_and_deb_command():

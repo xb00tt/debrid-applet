@@ -37,7 +37,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 from debrid_api import (DONE, DOWNLOADING, ERROR, EXPIRED, INVALID_KEY, PROCESSING, QUEUED, SEEDING, STALLED,  # noqa: E402
                         AllDebrid, ApiError, RealDebrid, Torbox, human_size, magnet_hash)
 from debrid_local_api import LocalApi  # noqa: E402
-from debrid_update import deb_command, download, install_mode, install_user, latest_release  # noqa: E402
+from debrid_update import deb_command, download, install_mode, install_user, latest_release, verify_signature  # noqa: E402
 
 VERSION = "1.0.6"
 APP_ID = "debrid-applet"  # WM_CLASS, icon name and .desktop basename all match
@@ -2315,13 +2315,21 @@ class App:
         if mode == "git":
             self._dialog(f"Debrid Applet {v} is available", f"This is a git checkout: run git pull in {HERE}.")
             return
-        asset = release.deb if mode == "deb" else release.tar
+        asset, sig = (release.deb, release.deb_sig) if mode == "deb" else (release.tar, release.tar_sig)
         if asset is None:
             self._dialog("No package in this release", f"Release {v} has no {'.deb' if mode == 'deb' else 'tarball'} for this install.")
+            return
+        if sig is None:
+            self._dialog("Update failed", f"Release {v} is not signed; not installing.")
             return
         updates = os.path.join(DATA_DIR, "updates")
         self._updating = v
         tab.say(f"Downloading update {v}…")
+
+        def fetch():  # the file and its signature, checked before anything else touches them
+            path = download(asset, updates)
+            verify_signature(path, download(sig, updates))
+            return path
 
         def installed(err=None, path=None):
             self._updating = ""
@@ -2329,9 +2337,9 @@ class App:
                 tab.say(f"Update failed: {err}", error=True)
                 self._dialog("Update failed", err)
                 return
-            if path:
+            for leftover in ((path, path + ".sig") if path else ()):
                 try:
-                    os.unlink(path)
+                    os.unlink(leftover)
                 except OSError:
                     pass
             self._installed = v
@@ -2374,7 +2382,7 @@ class App:
                                  "Copy the command to install it yourself?", "Copy sudo command"):
                         copy_text(f"sudo apt install {shlex.quote(path)}")
             threading.Thread(target=lambda: GLib.idle_add(finished, proc.wait()), daemon=True).start()
-        run_async(lambda: download(asset, updates), after_download)
+        run_async(fetch, after_download)
 
     def restart(self):
         """Quit and let main() exec this file again: same PID, the bus name is freed by the exec, so the new
