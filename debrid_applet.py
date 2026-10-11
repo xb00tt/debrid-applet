@@ -2243,8 +2243,12 @@ class App:
                     installed(None, path)
                     return
                 self._updating = ""
-                if code in (126, 127):  # pkexec: dismissed or not authorised
+                if code == 126:  # pkexec: the prompt was dismissed
                     tab.say("Update cancelled: authentication did not complete", error=True)
+                elif code == 127:  # pkexec: not authorised (wrong password, no polkit agent, not an admin); the
+                    tab.say("Update failed: not authorised", error=True)  # window may be hidden, so also notify
+                    notify(f"Debrid Applet {v} not installed",
+                           f"Authentication failed. Try again from the tray menu, or run: sudo apt install {path}")
                 else:
                     tab.say(f"Update failed: apt-get exited {code}, see {log_path}", error=True)
                     if self._ask(f"apt-get exited with code {code} (details in {log_path}).\n"

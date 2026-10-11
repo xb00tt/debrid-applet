@@ -25,7 +25,8 @@ Prefer running from source? Clone the repo and run `./install.sh`.
    AllDebrid: alldebrid.com/apikeys). Services you leave empty just stay out of the way.
 3. **Test keys**, then **Save**.
 
-Keys stay on your machine in `~/.config/debrid-applet/config.json`, readable only by you.
+Keys stay on your machine in `~/.config/debrid-applet/config.json`, readable only by you. Once a day the applet asks
+`api.github.com` for the latest release (nothing else is sent); turn that off under Settings → Advanced.
 
 ## Everyday use
 
