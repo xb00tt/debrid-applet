@@ -1862,7 +1862,8 @@ class App:
         self.icon.set_tooltip_text("Debrid")
         self.icon.connect("activate", self.toggle_window)
         menu = Gtk.Menu()
-        for label, cb in (("Refresh", self.refresh), ("Settings…", self.open_settings), ("About…", self.open_about),
+        for label, cb in (("Refresh", self.refresh), ("Settings…", self.open_settings),
+                          ("Check for updates…", lambda *_: self.check_updates(True)), ("About…", self.open_about),
                           ("Quit", lambda *_: self.gapp.quit())):
             item = Gtk.MenuItem(label=label)
             item.connect("activate", cb)
@@ -1891,6 +1892,8 @@ class App:
         self.watcher.start()
         self.feeds.start()
         self.start_api()
+        GLib.timeout_add_seconds(60, lambda: self._check_updates_auto() and False)  # once, shortly after start
+        GLib.timeout_add_seconds(86400, self._check_updates_auto)  # then daily while running
 
     def build_tabs(self):
         for page in list(self.notebook.get_children()):
@@ -2116,12 +2119,82 @@ class App:
             self._settings_shown_for = key
             self.open_settings()
 
+    # ----- updates -----
+    def _dialog(self, title, text):
+        dlg = Gtk.MessageDialog(transient_for=self.window, modal=True, message_type=Gtk.MessageType.INFO,
+                                buttons=Gtk.ButtonsType.CLOSE, text=title)
+        dlg.format_secondary_text(text)
+        dlg.run()
+        dlg.destroy()
+
+    def _ask(self, text, yes_label):
+        dlg = Gtk.MessageDialog(transient_for=self.window, modal=True, message_type=Gtk.MessageType.QUESTION, text=text)
+        dlg.add_buttons("Not now", Gtk.ResponseType.NO, yes_label, Gtk.ResponseType.YES)
+        dlg.set_default_response(Gtk.ResponseType.YES)
+        answer = dlg.run()
+        dlg.destroy()
+        return answer == Gtk.ResponseType.YES
+
+    def _skip(self, v):
+        self.cfg["update_skip"] = v
+        save_config(self.cfg)
+
+    def _update_dialog(self, release, v):
+        dlg = Gtk.MessageDialog(transient_for=self.window, modal=True, message_type=Gtk.MessageType.INFO,
+                                text=f"Debrid Applet {v} is available")
+        dlg.format_secondary_text(f"You have {VERSION}. Update downloads the release and installs it"
+                                  + (" (one password prompt)." if install_mode(HERE) == "deb" else "."))
+        dlg.add_buttons("Release notes", 1, "Close", Gtk.ResponseType.CLOSE, "Update", Gtk.ResponseType.OK)
+        dlg.set_default_response(Gtk.ResponseType.OK)
+        answer = dlg.run()
+        dlg.destroy()
+        if answer == 1:
+            open_url(release.notes_url)
+        elif answer == Gtk.ResponseType.OK:
+            self.update_to(release)
+
+    def check_updates(self, manual=True):
+        """Ask GitHub for the latest release. Manual checks always report in a dialog; automatic ones only notify
+        about a newer version the user has not skipped, and log everything else at verbose level."""
+        def done(release, err):
+            if err:
+                if manual:
+                    self._dialog("Update check failed", err)
+                else:
+                    log_event("", f"Update check: {err}", "verbose")
+                return
+            if release is None:
+                if manual:
+                    self._dialog("Up to date", f"Debrid Applet {VERSION} is the latest version.")
+                else:
+                    log_event("", "Update check: up to date", "verbose")
+                return
+            v = ".".join(map(str, release.version))
+            log_event("", f"Update check: {v} available")
+            if manual:
+                self._update_dialog(release, v)
+            elif v != self.cfg.get("update_skip"):
+                notify(f"Debrid Applet {v} available", f"You have {VERSION}.",
+                       [("Update", lambda: self.update_to(release)), ("Release notes", lambda: open_url(release.notes_url)),
+                        ("Skip this version", lambda: self._skip(v))])
+        run_async(lambda: latest_release(VERSION), done)
+
+    def _check_updates_auto(self):
+        if self.cfg.get("check_updates"):
+            self.check_updates(manual=False)
+        return True
+
+    def update_to(self, release):
+        """Replaced in the next task."""
+        self._dialog("Not yet", "Self-update arrives in the next commit.")
+
     def open_about(self, *_):
         dlg = Gtk.AboutDialog(transient_for=self.window, modal=True, program_name="Debrid Applet", version=VERSION,
                               comments="Tray control panel for Torbox, Real-Debrid and AllDebrid.",
                               website=HOMEPAGE, website_label="GitHub: xb00tt/debrid-applet",
                               license_type=Gtk.License.MIT_X11, authors=["Borislav (xb00tt)"], logo_icon_name=APP_ID)
-        dlg.connect("response", lambda d, _r: d.destroy())
+        dlg.add_button("Check for updates", 1)
+        dlg.connect("response", lambda d, r: (d.destroy(), self.check_updates(True)) if r == 1 else d.destroy())
         dlg.show()
 
     def open_log(self, *_):
