@@ -116,6 +116,30 @@ def test_ad_active_only():
     assert len(out) == 1 and s.calls[0][2]["data"] == {"status": "active"}
 
 
+def test_poll_tabs_runs_services_in_parallel():
+    import time
+    import debrid_applet as da
+
+    class Tab:
+        def __init__(self, name): self.name = name
+    tabs = [Tab("a"), Tab("b"), Tab("c"), Tab("d")]
+
+    def fetch_one(tab):
+        time.sleep(0.3)
+        if tab.name == "c":
+            raise ApiError("Invalid API key")
+        if tab.name == "d":
+            raise KeyError("id")
+        return {"plan": tab.name}, [tab.name]
+    t0 = time.monotonic()
+    results = da.poll_tabs(tabs, fetch_one)
+    assert time.monotonic() - t0 < 0.9  # four 0.3 s fetches side by side, not 1.2 s in a row
+    assert [r[0].name for r in results] == ["a", "b", "c", "d"]  # tab order kept whatever finished first
+    assert results[0][1:] == ({"plan": "a"}, ["a"], None) and results[1][1:] == ({"plan": "b"}, ["b"], None)
+    assert results[2][1:] == (None, None, "Invalid API key") and results[3][1:] == (None, None, "KeyError: 'id'")
+    assert da.poll_tabs([], fetch_one) == []
+
+
 def test_merge_active():
     import debrid_applet as da
     full = [{"id": "1", "done": False, "name": "a", "state": "downloading"}, {"id": "2", "done": True, "name": "b"},
@@ -204,9 +228,17 @@ def test_rd_select_failure_keeps_list():
         {"id": "B", "filename": "b.iso", "progress": 0, "status": "waiting_files_selection", "bytes": 10},
         {"id": "C", "filename": "c.zip", "progress": 100, "status": "downloaded", "bytes": 5},
     ]), FakeResp(403, {"error": "infringing_file", "error_code": 35}))
-    out = RealDebrid("t", s).torrents()
+    rd = RealDebrid("t", s)
+    out = rd.torrents()
     assert [t["id"] for t in out] == ["B", "C"]
     assert out[0]["state"] == "Error: select failed: infringing_file"
+    s.queue.append(FakeResp(200, [{"id": "B", "filename": "b.iso", "progress": 0, "status": "waiting_files_selection", "bytes": 10}]))
+    assert rd.torrents()[0]["state"] == "Error: select failed: infringing_file" and len(s.calls) == 3  # no second POST for a permanent failure
+    s = FakeSession(FakeResp(200, [{"id": "B", "filename": "b.iso", "status": "waiting_files_selection"}]), FakeResp(429, {}),
+                    FakeResp(200, [{"id": "B", "filename": "b.iso", "status": "waiting_files_selection"}]), FakeResp(204))
+    rd = RealDebrid("t", s)
+    assert rd.torrents()[0]["state"].startswith("Error: select failed: Rate limited")
+    assert rd.torrents()[0]["state"] == "Queued" and len(s.calls) == 4  # a transient failure is retried on the next poll
 
 
 def test_links_partial_on_rate_limit():
@@ -750,8 +782,9 @@ def test_column_layout_per_tab_and_migration():
 
 def test_aria2_command():
     import debrid_applet
-    cmd = debrid_applet.aria2_command(["https://cdn/a b.mkv", "https://cdn/c"], "/home/u/Downloads")
-    assert cmd == "aria2c -c -Z -x 8 -s 8 --dir=/home/u/Downloads 'https://cdn/a b.mkv' https://cdn/c"
+    cmd = debrid_applet.aria2_command(["https://cdn/a&b.mkv", "https://cdn/c"], "/home/u/Downloads")
+    assert cmd == "aria2c -c -Z -x 8 -s 8 --dir=/home/u/Downloads 'https://cdn/a&b.mkv' https://cdn/c"  # shell-safe quoting
+    assert debrid_applet.aria2_command(["https://cdn/a b.mkv"], "/x") == ""  # a URL with a space is not a URL
     assert debrid_applet.aria2_command([], "/x") == ""
     assert debrid_applet.aria2_command(["--dir=/etc", "ftp://x"], "/x") == ""  # only http(s) URLs reach the shell line
 
@@ -783,6 +816,11 @@ def test_power_helpers():
     assert da.download_command(["https://a"], "/d/x", "wget") == ["wget", "-c", "-P", "/d/x", "https://a"]
     assert da.download_command(["--output-document=/home/u/.bashrc", "https://a", None], "/d/x", "wget") == ["wget", "-c", "-P", "/d/x", "https://a"]
     assert da.download_command(["-e", "ftp://a"], "/d/x", "aria2c") == []  # service junk never becomes a flag
+    assert da.download_command(["https://a", "https://b"], "/d/x", "wget", via_stdin=True) == ["wget", "-c", "-P", "/d/x", "-i", "-"]
+    assert da.download_command(["https://a"], "/d/x", "aria2c", via_stdin=True) == ["aria2c", "-c", "-Z", "-x", "8", "-s", "8", "--dir=/d/x", "-i", "-"]
+    assert da.download_command(["ftp://a"], "/d/x", "wget", via_stdin=True) == []  # nothing to feed: no process
+    assert not da.is_http("https://x\n  dir=/etc") and not da.is_http("https://a b")  # one URL per input line, no option lines
+    assert da.is_http("https://a/b?c=d%20e")
     assert da.safe_dirname("Show: S01/E01 [x]?") == "Show_ S01_E01 [x]_"
     assert all(da.safe_dirname(n) == "download" for n in (".", "..", "...", " .. ", ""))  # would escape the download folder
     assert da.safe_dirname("..hidden..") == "hidden"
@@ -990,6 +1028,15 @@ def test_fetch_bytes_guards():
     class Quiet(http.server.SimpleHTTPRequestHandler):
         def log_message(self, *_): pass
         def do_GET(self):
+            if self.path == "/drip":  # 10 bytes, one every half second, Content-Length known: a slow-drip server
+                import time
+                self.send_response(200); self.send_header("Content-Length", "10"); self.end_headers()
+                for _ in range(10):
+                    try:
+                        self.wfile.write(b"x"); self.wfile.flush(); time.sleep(0.5)
+                    except (BrokenPipeError, ConnectionResetError):
+                        return
+                return
             if self.path in ("/redir", "/redir-bad", "/loop"):  # -> small file / file: URL / itself
                 target = {"/redir": "/small.torrent", "/redir-bad": "file:///etc/passwd", "/loop": "/loop"}[self.path]
                 self.send_response(302); self.send_header("Location", target); self.end_headers(); return
@@ -1029,6 +1076,13 @@ def test_fetch_bytes_guards():
         assert False
     except ApiError as e:
         assert "malformed URL" in str(e) and "SECRET" not in str(e)
+    import time
+    t0 = time.monotonic()
+    try:
+        da.fetch_bytes(base + "/drip", 1000, allow_private=True, deadline=1)  # the per-read timeout never fires on a drip
+        assert False
+    except ApiError as e:
+        assert "within 1 s" in str(e) and time.monotonic() - t0 < 3, (str(e), time.monotonic() - t0)
     assert da.fetch_bytes(base + "/redir", 1000, allow_private=True) == b"d8:announce0:e"
     for path, text in (("/redir-bad", "unsupported"), ("/loop", "too many redirects")):
         try:

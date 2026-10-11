@@ -45,7 +45,6 @@ The applet's update check reads `releases/latest`: keep the tag `vX.Y.Z` and the
 it takes every `.py` and `.svg` directly under the archive root (tests excluded), so a new module travels with the
 release; `debrid_update.FILES` is the required minimum and must match the copy list in `install.sh` (a test checks).
 
-
 ## Adding a service
 
 One client class in `debrid_api.py` with `name` and `short` (the All tab's two-letter label) implementing `account`,

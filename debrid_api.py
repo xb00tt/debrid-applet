@@ -156,6 +156,10 @@ class RealDebrid(_Client):
     name = "Real-Debrid"
     short = "RD"
 
+    def __init__(self, token, session=None):
+        super().__init__(token, session)
+        self._select_failed = {}  # id -> message of a permanent selectFiles failure; not re-sent on every poll
+
     def _json(self, method, path, **kw):
         r = self._req(method, path, **kw)
         return None if r.status_code == 204 or not r.text else _body(r, self.name)
@@ -185,10 +189,16 @@ class RealDebrid(_Client):
             raw = t.get("status", "")
             state = state_label(raw, RD_STATES)
             if raw == "waiting_files_selection":
-                try:
-                    self._select_all(t["id"])
-                except ApiError as e:
-                    state = f"{ERROR}: select failed: {e}"
+                err = self._select_failed.get(t["id"])
+                if err is None:
+                    try:
+                        self._select_all(t["id"])
+                    except ApiError as e:
+                        err = str(e)
+                        if not err.startswith(("Rate limited", "Network error")):  # transient ones are retried next poll
+                            self._select_failed[t["id"]] = err
+                if err:
+                    state = f"{ERROR}: select failed: {err}"
             out.append({
                 "id": str(t["id"]),
                 "name": t.get("filename", ""),

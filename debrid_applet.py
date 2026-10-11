@@ -165,8 +165,9 @@ def copy_text(text):
 
 
 def is_http(url):
-    """True for an http(s) URL string: the only kind of link that may reach a player, aria2c/wget, xdg-open or a fetch."""
-    return isinstance(url, str) and url.lower().startswith(("http://", "https://"))
+    """True for an http(s) URL string without whitespace: the only kind of link that may reach a player, aria2c/wget,
+    xdg-open or a fetch (a URL never holds whitespace; one that does could smuggle an option line into aria2c's input)."""
+    return isinstance(url, str) and url.lower().startswith(("http://", "https://")) and not any(c.isspace() for c in url)
 
 
 def add_label(text):
@@ -327,15 +328,17 @@ class MergedClient:
         return self._first().add_link(url)
 
 
-def download_command(urls, dest, tool):
+def download_command(urls, dest, tool, via_stdin=False):
     """argv for a resumable bulk download into dest with aria2c (one file per URL, 8 connections each) or wget;
-    [] without URLs. Only http(s) URLs are passed on: anything else from a service could be read as a flag."""
+    [] without URLs. Only http(s) URLs are passed on: anything else from a service could be read as a flag.
+    via_stdin: the tool reads the URLs from stdin (one per line) so they never show in ps; the caller feeds them."""
     urls = [u for u in urls if is_http(u)]
     if not urls:
         return []
+    tail = ["-i", "-"] if via_stdin else urls
     if tool == "aria2c":
-        return ["aria2c", "-c", "-Z", "-x", "8", "-s", "8", f"--dir={dest}", *urls]
-    return ["wget", "-c", "-P", dest, *urls]
+        return ["aria2c", "-c", "-Z", "-x", "8", "-s", "8", f"--dir={dest}", *tail]
+    return ["wget", "-c", "-P", dest, *tail]
 
 
 def safe_dirname(name):
@@ -435,14 +438,38 @@ def is_public_host(host):
     return bool(infos)
 
 
-def fetch_bytes(url, max_bytes, allow_private=False):
+def fetch_bytes(url, max_bytes, allow_private=False, deadline=90):
+    """_fetch_bytes on its own daemon thread with a total deadline: the per-read timeout never fires on a server that
+    trickles bytes, so after deadline seconds the caller gets an ApiError and the stuck thread is left to die with
+    its connection (ponytail: one leaked thread per such server, instead of a blocked worker)."""
+    out = {}
+
+    def work():
+        try:
+            out["data"] = _fetch_bytes(url, max_bytes, allow_private)
+        except Exception as e:  # re-raised on the caller's thread
+            out["err"] = e
+    t = threading.Thread(target=work, daemon=True)
+    t.start()
+    t.join(deadline)
+    if t.is_alive():
+        try:
+            host = (parse_url(url).host or "").strip("[]")
+        except ValueError:
+            host = ""
+        raise ApiError(f"{host}: no complete answer within {deadline:g} s")
+    if "err" in out:
+        raise out["err"]
+    return out["data"]
+
+
+def _fetch_bytes(url, max_bytes, allow_private=False):
     """GET a URL with a hard size cap. Redirects are followed by hand so every hop gets the same checks:
     http(s) only, and no private/loopback hosts unless the caller trusts the URL (feeds typed into Settings).
     The host is taken from urllib3's parser, the one requests connects with, so the two cannot disagree
     (urlparse reads 'http://127.0.0.1:9\\@public/x' as public, urllib3 connects to 127.0.0.1).
     Errors name the host only: tracker URLs carry passkeys.
-    ponytail: the name is resolved twice (check, then connect), so a DNS-rebinding host still gets one blind GET;
-    the 20 s timeout is per read, so a server that trickles bytes can hold the worker for a long time."""
+    ponytail: the name is resolved twice (check, then connect), so a DNS-rebinding host still gets one blind GET."""
     host = ""
     try:
         for _hop in range(5):
@@ -532,6 +559,26 @@ def route_items(items, checker):
             cached = set()
     return {True: [i for i in items if hashes.get(i) and hashes[i] in cached],
             False: [i for i in items if not (hashes.get(i) and hashes[i] in cached)]}
+
+
+def poll_tabs(tabs, fetch_one):
+    """fetch_one(tab) for every tab at the same time, one daemon thread each, so a slow service does not delay the
+    others; results in tab order as (tab, account, torrents, error)."""
+    results = [None] * len(tabs)
+
+    def work(i, tab):
+        try:
+            results[i] = (tab, *fetch_one(tab), None)
+        except ApiError as e:
+            results[i] = (tab, None, None, str(e))
+        except Exception as e:
+            results[i] = (tab, None, None, f"{type(e).__name__}: {e}")
+    threads = [threading.Thread(target=work, args=(i, t), daemon=True) for i, t in enumerate(tabs)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    return results
 
 
 def merge_active(full, active):
@@ -1229,7 +1276,13 @@ class ServiceTab(Gtk.Box):
             os.makedirs(DATA_DIR, mode=0o700, exist_ok=True)
             log_path = os.path.join(DATA_DIR, f"download-{safe_dirname(t['name'])[:40]}.log")
             with open(os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "ab") as log:
-                proc = subprocess.Popen(download_command(urls, dest, tool), stdout=log, stderr=log)
+                proc = subprocess.Popen(download_command(urls, dest, tool, via_stdin=True), stdin=subprocess.PIPE,
+                                        stdout=log, stderr=log)
+            try:
+                proc.stdin.write(("\n".join(urls) + "\n").encode())  # on stdin: other users' ps never sees the links
+                proc.stdin.close()
+            except BrokenPipeError:
+                pass  # the tool quit at once; its exit code is reported below
             self.say(f"Auto-download: {len(urls)} file(s) via {tool} into {dest}")
             notify(f"{self.name}: downloading {len(urls)} file(s)", dest)
 
@@ -2078,18 +2131,8 @@ class App:
             t._last_full = now
             return account, torrents
 
-        def fetch():
-            results = []
-            for t in tabs:
-                if t.is_merged:
-                    continue  # built from the other tabs' lists once those are rendered
-                try:
-                    results.append((t, *fetch_one(t), None))
-                except ApiError as e:
-                    results.append((t, None, None, str(e)))
-                except Exception as e:
-                    results.append((t, None, None, f"{type(e).__name__}: {e}"))
-            return results
+        def fetch():  # merged tabs are built from the other tabs' lists once those are rendered
+            return poll_tabs([t for t in tabs if not t.is_merged], fetch_one)
 
         def done(results, _err):
             self._polling = False
