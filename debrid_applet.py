@@ -1876,6 +1876,7 @@ class App:
         self._polling = False  # a poll is in flight; refresh() then only asks for another one afterwards
         self.restart_requested = False  # set by restart(); main() re-execs this file after the main loop ends
         self._updating = ""  # version an update_to() is working on, until it finishes or fails
+        self._installed = ""  # version installed in this session but not yet running (the user chose "Not now")
         self._refresh_again = False
         self._timer = 0
         self._interval = POLL_SLOW
@@ -2183,6 +2184,11 @@ class App:
     def check_updates(self, manual=True):
         """Ask GitHub for the latest release. Manual checks always report in a dialog; automatic ones only notify
         about a newer version the user has not skipped, and log everything else at verbose level."""
+        if self._installed:  # already installed this session; only the restart is missing, no need to ask GitHub
+            if manual and self._ask(f"Debrid Applet {self._installed} is installed. Restart now?", "Restart"):
+                self.restart()
+            return
+
         def done(release, err):
             if err:
                 if manual:
@@ -2220,6 +2226,10 @@ class App:
         if self._updating:  # a second Update click while the first runs would download onto the same file
             tab.say(f"Update to {self._updating} already in progress")
             return
+        if self._installed:  # installed earlier this session: offer the restart again instead of a second download
+            if self._ask(f"Debrid Applet {self._installed} is installed. Restart now?", "Restart"):
+                self.restart()
+            return
         if mode == "git":
             self._dialog(f"Debrid Applet {v} is available", f"This is a git checkout: run git pull in {HERE}.")
             return
@@ -2242,6 +2252,7 @@ class App:
                     os.unlink(path)
                 except OSError:
                     pass
+            self._installed = v
             tab.say(f"Debrid Applet {v} installed")
             notify(f"Debrid Applet {v} installed", "Restart to use it.")
             if self._ask(f"Debrid Applet {v} is installed. Restart now?", "Restart"):

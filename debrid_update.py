@@ -82,7 +82,7 @@ def install_mode(here):
     """'deb' (the package, under /usr), 'git' (a checkout: update with git pull) or 'user' (an install.sh copy)."""
     if here.startswith("/usr/"):
         return "deb"
-    if os.path.isdir(os.path.join(here, ".git")):
+    if os.path.exists(os.path.join(here, ".git")):  # a directory, or a file in a git worktree
         return "git"
     return "user"
 

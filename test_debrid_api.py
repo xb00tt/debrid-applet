@@ -1115,6 +1115,9 @@ def test_update_install_mode_and_deb_command():
     os.makedirs(os.path.join(root, "git", ".git"))
     os.makedirs(os.path.join(root, "user"))
     assert du.install_mode(os.path.join(root, "git")) == "git" and du.install_mode(os.path.join(root, "user")) == "user"
+    os.makedirs(os.path.join(root, "wt"))
+    open(os.path.join(root, "wt", ".git"), "w").write("gitdir: /somewhere/.git/worktrees/wt\n")  # a git worktree: .git is a file
+    assert du.install_mode(os.path.join(root, "wt")) == "git"
     argv = du.deb_command("/home/u/.local/share/debrid-applet/updates/x.deb", "sha256:" + "c" * 64)
     assert argv[:6] == ["pkexec", "env", "DEBIAN_FRONTEND=noninteractive", "sh", "-c", du.DEB_SCRIPT]
     assert argv[6:] == ["sh", "/home/u/.local/share/debrid-applet/updates/x.deb", "c" * 64]
