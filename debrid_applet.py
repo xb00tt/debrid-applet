@@ -33,6 +33,7 @@ from gi.repository import Gdk, Gio, GLib, Gtk, Notify, Pango, XApp  # noqa: E402
 HERE = os.path.dirname(os.path.abspath(__file__))
 from debrid_api import INVALID_KEY, AllDebrid, ApiError, RealDebrid, Torbox, human_size, magnet_hash  # noqa: E402
 from debrid_local_api import LocalApi  # noqa: E402
+from debrid_update import deb_command, download, install_mode, install_user, latest_release  # noqa: E402
 
 VERSION = "1.0.3"
 APP_ID = "debrid-applet"  # WM_CLASS, icon name and .desktop basename all match
@@ -77,6 +78,7 @@ EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "no
                 "feeds": "", "feed_interval_min": 15, "feed_seen": [],  # RSS: "url | regex | service" lines
                 "player_command": "",  # custom Play target, e.g. "stremio {url}" or "kodi-send --action=PlayMedia({url})"
                 "start_tab": "All",  # tab shown when the window opens
+                "check_updates": True, "update_skip": "",  # daily GitHub release check; version the user chose to skip
                 "config_version": 2,  # bumped when the layout changes; see migrate_config()
                 "notified_expiry": {}}  # service -> expiry date already warned about
 POLL_FAST, POLL_SLOW = 8, 60  # seconds between polls while something is active / when everything is idle
@@ -2310,6 +2312,8 @@ class SettingsForm:
         g.attach(token, 1, g._row, 1, 1)
         g._row += 1
         self._note(g, "Every call needs ?token=… or an X-Debrid-Token header. Delete http_token in config.json for a new one.")
+        self._heading(g, "Updates")
+        self._check(g, "check_updates", "Check for updates daily (GitHub releases)")
         self._heading(g, "Activity log")
         self._combo(g, "log_level", "Level", list(LOG_LEVELS))
         self._spin(g, "log_max_kb", "Size limit (KB)", 50, 100000, 50)

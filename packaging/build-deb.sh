@@ -9,7 +9,7 @@ trap 'rm -rf "$STAGE"' EXIT
 APP="$STAGE/usr/share/$PKG"
 mkdir -p "$APP" "$STAGE/usr/bin" "$STAGE/usr/share/applications" "$STAGE/etc/xdg/autostart" \
          "$STAGE/usr/share/icons/hicolor/scalable/apps" "$STAGE/usr/share/doc/$PKG" "$STAGE/DEBIAN"
-cp "$SRC/debrid_api.py" "$SRC/debrid_local_api.py" "$SRC/debrid_applet.py" "$SRC/debrid-applet.svg" "$APP/"
+cp "$SRC/debrid_api.py" "$SRC/debrid_local_api.py" "$SRC/debrid_update.py" "$SRC/debrid_applet.py" "$SRC/debrid-applet.svg" "$APP/"
 cp "$SRC/debrid-applet.svg" "$STAGE/usr/share/icons/hicolor/scalable/apps/"
 cp "$SRC/README.md" "$SRC/LICENSE" "$STAGE/usr/share/doc/$PKG/"
 printf '#!/bin/sh\nexec python3 /usr/share/%s/debrid_applet.py "$@"\n' "$PKG" > "$STAGE/usr/bin/$PKG"

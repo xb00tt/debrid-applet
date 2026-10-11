@@ -575,7 +575,7 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
                 "stop_seeding_when_done": False, "auto_download_videos_only": False, "delete_after_download": False,
                 "route_cached": False, "config_version": 2,
                 "feeds": "", "feed_interval_min": 15, "feed_seen": [], "player_command": "", "start_tab": "All",
-                "time_filter": "week"}
+                "time_filter": "week", "check_updates": True, "update_skip": ""}
     assert debrid_applet.load_config() == defaults
     debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b", "notify_done": False})
     assert debrid_applet.column_layout({}, "AllDebrid")["hidden"] == ["peers", "ratio"]
