@@ -108,8 +108,11 @@ def download(asset, dest_dir, session=None):
     Refuses without a digest, stops at twice the declared size, leaves nothing behind on failure."""
     if not asset.digest.startswith("sha256:"):
         raise ApiError(f"Release has no checksum for {asset.name}; not installing")
+    name = os.path.basename(asset.name)  # the name comes from the release JSON: never a path
+    if not name:
+        raise ApiError("Release asset has no usable name")
     os.makedirs(dest_dir, mode=0o700, exist_ok=True)
-    path = os.path.join(dest_dir, asset.name)
+    path = os.path.join(dest_dir, name)
     part = path + ".part"
     limit = max(2 * asset.size, 1_000_000)
     digest = hashlib.sha256()

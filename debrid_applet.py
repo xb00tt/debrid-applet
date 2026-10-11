@@ -2254,7 +2254,6 @@ class App:
                     pass
             self._installed = v
             tab.say(f"Debrid Applet {v} installed")
-            notify(f"Debrid Applet {v} installed", "Restart to use it.")
             if self._ask(f"Debrid Applet {v} is installed. Restart now?", "Restart"):
                 self.restart()
 

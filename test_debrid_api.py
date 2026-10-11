@@ -1199,6 +1199,14 @@ def test_update_download_verifies_digest():
         assert False
     except ApiError as e:
         assert str(e) == "Download failed: HTTPError" and not os.path.exists(os.path.join(dest, "missing.deb.part"))
+    os.path.exists("/tmp/escaped.deb") and os.remove("/tmp/escaped.deb")
+    path = du.download(asset("../../tmp/escaped.deb", "/good.deb", len(payload), good), dest)  # name from JSON: basename only
+    assert path == os.path.join(dest, "escaped.deb") and not os.path.exists("/tmp/escaped.deb")
+    try:
+        du.download(asset("", "/good.deb", len(payload), good), dest)
+        assert False
+    except ApiError as e:
+        assert "name" in str(e)
     srv.shutdown()
 
 
