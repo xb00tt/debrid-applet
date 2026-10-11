@@ -24,7 +24,7 @@ Priority: optional
 Architecture: all
 Depends: python3 (>= 3.11), python3-gi, gir1.2-gtk-3.0, gir1.2-xapp-1.0, gir1.2-notify-0.7, python3-requests
 Recommends: mpv | vlc | celluloid, aria2
-Maintainer: Borislav <borislav.bg@gmail.com>
+Maintainer: xb00tt <borislav.bg@gmail.com>
 Homepage: https://github.com/xb00tt/debrid-applet
 Description: Tray control panel for Torbox, Real-Debrid and AllDebrid
  Shows account status and every torrent with live progress, adds magnets,

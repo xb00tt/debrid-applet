@@ -2268,7 +2268,7 @@ class App:
         dlg = Gtk.AboutDialog(transient_for=self.window, modal=True, program_name="Debrid Applet", version=VERSION,
                               comments="Tray control panel for Torbox, Real-Debrid and AllDebrid.",
                               website=HOMEPAGE, website_label="GitHub: xb00tt/debrid-applet",
-                              license_type=Gtk.License.MIT_X11, authors=["Borislav (xb00tt)"], logo_icon_name=APP_ID)
+                              license_type=Gtk.License.MIT_X11, authors=["xb00tt"], logo_icon_name=APP_ID)
         dlg.add_button("Check for updates", 1)
         dlg.connect("response", lambda d, r: (d.destroy(), self.check_updates(True)) if r == 1 else d.destroy())
         dlg.show()
