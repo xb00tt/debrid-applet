@@ -16,7 +16,7 @@ import tempfile
 import threading
 import time
 import xml.etree.ElementTree as ET
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import parse_qs, quote, urljoin, urlparse
 
 import gi
@@ -62,6 +62,7 @@ LOG_SETTINGS = {"level": "actions", "max": LOG_MAX}  # mirrored from the config 
 EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "notify_added": True, "notify_done": True,
                 "watch_clipboard": True, "columns": {}, "window": [],  # columns: per-service, see column_layout()
                 "remember_filter": True, "filters": {},  # filters: last state-filter choice per service
+                "time_filter": "week",  # default "added within" window of the toolbar dropdown; see TIME_FILTERS
                 "dblclick_play": False,  # double-click plays videos instead of opening the file panel
                 "dblclick_asked": False,  # the one-time offer to turn dblclick_play on has been shown
                 "watch_dir": "", "watch_service": "Torbox",  # .torrent files dropped here get uploaded there
@@ -712,6 +713,18 @@ WIDTHS = {"check": 28, "service": 95, "name": 120, "dl": 85, "ul": 85, "progress
 PALETTE = {"active": "#3b82f6", "done": "#22c55e", "seed": "#14b8a6", "warn": "#f59e0b", "error": "#ef4444"}
 CONTROL_LAG_NOTE = ("Torbox confirms at once but applies it on its own schedule; "
                     "the State column can keep its old value for a long while.")
+TIME_FILTERS = (("all", "Any time"), ("day", "Last 24 hours"), ("week", "Last 7 days"), ("month", "Last 30 days"))
+TIME_WINDOW = {"day": 1, "week": 7, "month": 30}  # days
+
+
+def added_within(iso, window, now=None):
+    """True when the item was added inside the window ("all", "day", "week", "month"); unknown dates are never hidden."""
+    if window not in TIME_WINDOW:
+        return True
+    dt = _parse_iso(iso) if iso else None
+    return dt is None or (now or datetime.now(timezone.utc)) - dt <= timedelta(days=TIME_WINDOW[window])
+
+
 STATE_FILTERS = (("all", "All states"), ("active", "Active"), ("done", "Done"), ("seed", "Seeding"),
                  ("warn", "Stalled"), ("error", "Error"))
 CSS = b"""
@@ -812,9 +825,16 @@ class ServiceTab(Gtk.Box):
         remembered = (app.cfg.get("filters") or {}).get(name, "all") if app.cfg.get("remember_filter") else "all"
         self.state_filter.set_active_id(remembered if remembered in dict(STATE_FILTERS) else "all")
         self.state_filter.connect("changed", self.on_state_filter)
+        self.time_filter = Gtk.ComboBoxText(tooltip_text="Show items added within… (default in Settings)")
+        for key, label in TIME_FILTERS:
+            self.time_filter.append(key, label)
+        default = app.cfg.get("time_filter") or "week"
+        self.time_filter.set_active_id(default if default in dict(TIME_FILTERS) else "week")
+        self.time_filter.connect("changed", lambda _c: self._fill())
         center = Gtk.Box(spacing=6)
         center.pack_start(self.search, False, False, 0)
         center.pack_start(self.state_filter, False, False, 0)
+        center.pack_start(self.time_filter, False, False, 0)
         row.set_center_widget(center)
         self.pack_start(row, False, False, 0)
 
@@ -1204,16 +1224,19 @@ class ServiceTab(Gtk.Box):
         ]
 
     def _fill(self):
-        """Show the last poll through the filter box and state dropdown. Same filter as last time: update rows
-        in place (keeps selection and scroll, cheap for thousands of rows); otherwise rebuild."""
+        """Show the last poll through the filter box and the state / added-within dropdowns. Same filters as last
+        time: update rows in place (keeps selection and scroll, cheap for thousands of rows); otherwise rebuild."""
         q = self.search.get_text().strip().lower()
         kind = self.state_filter.get_active_id() or "all"
+        window = self.time_filter.get_active_id() or "all"
         now = time.monotonic()
+        utc_now = datetime.now(timezone.utc)
         self._pending = [(exp, row) for exp, row in self._pending if now < exp]
         rows = [t for t in [row for _exp, row in self._pending] + self.torrents  # placeholders first
                 if not (q and q not in t["name"].lower() and q not in t["state"].lower())
-                and not (kind != "all" and state_kind(t["state"]) != kind)]
-        if self._shown_key == (q, kind) and self._iters:
+                and not (kind != "all" and state_kind(t["state"]) != kind)
+                and added_within(t["added"], window, utc_now)]
+        if self._shown_key == (q, kind, window) and self._iters:
             wanted = {t["id"] for t in rows}
             for tid in [tid for tid in self._iters if tid not in wanted]:
                 self.store.remove(self._iters.pop(tid))
@@ -1238,7 +1261,7 @@ class ServiceTab(Gtk.Box):
                 self._iters[t["id"]] = self.store.append(values)
             if selected and selected["id"] in self._iters:
                 self.view.get_selection().select_iter(self._iters[selected["id"]])
-            self._shown_key = (q, kind)
+            self._shown_key = (q, kind, window)
         self._sync_checks()
 
     # ----- actions -----
@@ -2176,7 +2199,8 @@ class SettingsForm:
         combo = Gtk.ComboBoxText()
         for value, text in options:
             combo.append(value, text)
-        combo.set_active_id(self.cfg.get(key) or options[0][0])
+        if not combo.set_active_id(str(self.cfg.get(key) or "")):  # unset or unlisted value: the real default, as the tabs do
+            combo.set_active_id(EMPTY_CONFIG.get(key) or options[0][0])
         grid.attach(Gtk.Label(label=label, xalign=0), 0, grid._row, 1, 1)
         grid.attach(combo, 1, grid._row, 1, 1)
         grid._row += 1
@@ -2235,6 +2259,7 @@ class SettingsForm:
         self._combo(g, "start_tab", "Tab on start-up", [("All", "All")] + [(s, s) for s in SERVICES])
         self._check(g, "watch_clipboard", "Watch the clipboard for magnet links")
         self._check(g, "remember_filter", "Remember the state filter between runs")
+        self._combo(g, "time_filter", "Show items added within", list(TIME_FILTERS))
         self._heading(g, "Playback")
         self._check(g, "dblclick_play", "Double-click plays videos (otherwise opens Files)")
         self._entry(g, "player_command", "Custom play command", hint="stremio {url}   or   mpv --fs {url} --sub-file={sub}")

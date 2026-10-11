@@ -562,7 +562,8 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
                 "http_port": 0, "http_token": "", "notified_expiry": {}, "log_level": "actions", "log_max_kb": 1000,
                 "stop_seeding_when_done": False, "auto_download_videos_only": False, "delete_after_download": False,
                 "route_cached": False, "config_version": 2,
-                "feeds": "", "feed_interval_min": 15, "feed_seen": [], "player_command": "", "start_tab": "All"}
+                "feeds": "", "feed_interval_min": 15, "feed_seen": [], "player_command": "", "start_tab": "All",
+                "time_filter": "week"}
     assert debrid_applet.load_config() == defaults
     debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b", "notify_done": False})
     assert debrid_applet.column_layout({}, "AllDebrid")["hidden"] == ["peers", "ratio"]
@@ -996,6 +997,21 @@ def test_fetch_bytes_guards():
         except ApiError as e:
             assert text in str(e), (path, str(e))
     srv.shutdown()
+
+
+def test_added_within():
+    import debrid_applet as da
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 10, 11, 12, 0, tzinfo=timezone.utc)
+    iso = lambda **delta: (now - timedelta(**delta)).isoformat()
+    assert da.added_within(iso(days=3), "week", now) and not da.added_within(iso(days=8), "week", now)
+    assert da.added_within(iso(hours=23), "day", now) and not da.added_within(iso(hours=25), "day", now)
+    assert da.added_within(iso(days=29), "month", now) and not da.added_within(iso(days=31), "month", now)
+    assert da.added_within(iso(days=400), "all", now)
+    assert da.added_within("", "week", now) and da.added_within("junk", "week", now)  # unknown date: never hidden
+    assert da.added_within("2026-10-11T11:00:00.000Z", "day", now)  # service formats: milliseconds and Z (Real-Debrid), Z (Torbox)
+    assert not da.added_within("2026-10-03T11:00:00.000Z", "week", now) and not da.added_within("2026-10-03T11:00:00Z", "week", now)
+    assert [k for k, _l in da.TIME_FILTERS] == ["all", "day", "week", "month"] and da.EMPTY_CONFIG["time_filter"] == "week"
 
 
 def test_add_label():

@@ -36,7 +36,8 @@ Keys stay on your machine in `~/.config/debrid-applet/config.json`, readable onl
   offers to add it.
 - **Tick rows** (or just click one) and use **Play**, **Files**, **Copy links** or **Delete**. Right-click a row
   for more, including sending it to another service.
-- **Find things** with the filter box and the state dropdown; click column headers to sort.
+- **Find things** with the filter box and the state and added-within dropdowns (last 7 days by default, change it
+  in Settings); click column headers to sort.
 - The **All** tab shows every service together; the other tabs show one service each.
 
 Everything else, from watch folders and RSS feeds to the local API and keyboard shortcuts, is described in the

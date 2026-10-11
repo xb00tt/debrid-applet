@@ -37,6 +37,9 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 
 - Filter box matches name or state as you type; the dropdown next to it narrows by state
   (Active / Done / Seeding / Stalled / Error); the dropdown choice is remembered per service (toggle in Settings). `Ctrl+F` focuses the box, `Esc` clears it.
+- The second dropdown shows only items added within the last 24 hours / 7 days / 30 days, or any time. Each run,
+  and every Settings save, starts at the default from Settings (7 days unless you change it); items whose added date
+  is unknown always show.
 - Lists start newest-first. Click a header to sort, drag headers to reorder or their edges to resize, right-click a header to show or hide columns.
   Layout, widths and sort are remembered per service. Columns a service never reports are hidden by default
   (Real-Debrid: Up / Peers / Ratio, AllDebrid: Peers / Ratio).
@@ -121,7 +124,7 @@ Right-click the tray icon → **Settings…**, or the gear in the toolbar. Four 
 
 - **Accounts**: the three API keys with **Test keys**.
 - **Behaviour**: notifications (added, finished), tab on start-up, clipboard watcher, remembered state filter,
-  double-click plays videos, custom play command.
+  default added-within window, double-click plays videos, custom play command.
 - **Automation**: watch folder and its target service; RSS feeds and their interval; what happens when an item
   finishes (auto-download, videos only, delete afterwards, download folder; Torbox stop seeding).
 - **Advanced**: local API port and token; activity log level and size cap.
