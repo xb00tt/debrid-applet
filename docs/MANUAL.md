@@ -89,7 +89,7 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
       python3 ~/.local/share/debrid-applet/debrid_applet.py --toggle
       python3 ~/.local/share/debrid-applet/debrid_applet.py --log
       python3 ~/.local/share/debrid-applet/debrid_applet.py --service Torbox --add 'magnet:?xt=…' 'https://hoster/file'
-      debrid-applet --version          # (the .deb puts `debrid-applet` on PATH; 1.0.0 hangs here while running, fixed after)
+      debrid-applet --version          # the .deb puts `debrid-applet` on PATH
 
   Without `--service`, cached-on-Torbox routing applies; `--service` naming a service without a key adds nothing and
   exits 1. Bind `--toggle` to a Cinnamon keyboard shortcut for a global hotkey.
