@@ -34,7 +34,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 from debrid_api import INVALID_KEY, AllDebrid, ApiError, RealDebrid, Torbox, human_size, magnet_hash  # noqa: E402
 from debrid_local_api import LocalApi  # noqa: E402
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 APP_ID = "debrid-applet"  # WM_CLASS, icon name and .desktop basename all match
 DBUS_ID = "io.github.xb00tt.DebridApplet"  # single-instance guard
 HOMEPAGE = "https://github.com/xb00tt/debrid-applet"
