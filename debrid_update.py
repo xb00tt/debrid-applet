@@ -133,3 +133,23 @@ def _unlink(path):
         os.unlink(path)
     except OSError:
         pass
+
+
+def install_user(tar_path, here):
+    """Replace FILES in here with the copies inside the release tarball (members <prefix>/<name>), one atomic
+    rename per file. Members are read by exact name; nothing else in the archive is looked at."""
+    with tarfile.open(tar_path, "r:gz") as tar:
+        members = {m.name.split("/", 1)[1]: m for m in tar.getmembers() if m.isfile() and "/" in m.name}
+        missing = [n for n in FILES if n not in members]
+        if missing:
+            raise ApiError(f"Release tarball lacks {', '.join(missing)}")
+        for name in FILES:
+            data = tar.extractfile(members[name]).read()
+            tmp = os.path.join(here, name + ".tmp")
+            try:
+                with open(tmp, "wb") as f:
+                    f.write(data)
+                os.replace(tmp, os.path.join(here, name))
+            except OSError as e:
+                _unlink(tmp)
+                raise ApiError(f"Cannot write {name}: {e.strerror}") from e

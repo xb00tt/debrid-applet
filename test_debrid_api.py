@@ -1159,6 +1159,54 @@ def test_update_download_verifies_digest():
     srv.shutdown()
 
 
+def test_update_install_user_from_tarball():
+    import io, os, shutil, stat, tarfile
+    import debrid_update as du
+    root = "/tmp/debrid-test-update-user"
+    shutil.rmtree(root, ignore_errors=True)
+    here = os.path.join(root, "here")
+    os.makedirs(here)
+    for name in du.FILES:
+        open(os.path.join(here, name), "w").write("old")
+
+    def build(tar_path, names, extra=()):
+        with tarfile.open(tar_path, "w:gz") as tar:
+            for name in names:
+                data = f"new {name}".encode()
+                info = tarfile.TarInfo(f"debrid-applet-9.9.9/{name}")
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+            for info in extra:
+                tar.addfile(info, io.BytesIO(b"evil") if info.isfile() else None)
+    good = os.path.join(root, "good.tar.gz")
+    build(good, du.FILES)
+    du.install_user(good, here)
+    for name in du.FILES:
+        assert open(os.path.join(here, name)).read() == f"new {name}" and not os.path.exists(os.path.join(here, name + ".tmp"))
+    # a member that escapes the prefix and a symlink member are ignored: only the five names are ever read
+    evil = tarfile.TarInfo("debrid-applet-9.9.9/../evil.py"); evil.size = 4
+    link = tarfile.TarInfo("debrid-applet-9.9.9/debrid_api.py"); link.type = tarfile.SYMTYPE; link.linkname = "/etc/passwd"
+    bad = os.path.join(root, "bad.tar.gz")
+    build(bad, [n for n in du.FILES if n != "debrid_api.py"], extra=(evil, link))
+    try:
+        du.install_user(bad, here)
+        assert False
+    except ApiError as e:
+        assert "debrid_api.py" in str(e)
+    assert not os.path.exists(os.path.join(root, "evil.py")) and open(os.path.join(here, "debrid_api.py")).read() == "new debrid_api.py"
+    ro = os.path.join(root, "ro")
+    os.makedirs(ro)
+    os.chmod(ro, 0o500)
+    try:
+        du.install_user(good, ro)
+        assert False
+    except ApiError as e:
+        assert "Cannot write" in str(e)
+    finally:
+        os.chmod(ro, 0o700)
+    assert os.listdir(ro) == []
+
+
 def test_add_label():
     import debrid_applet
     assert debrid_applet.add_label("magnet:?xt=urn:btih:abc&dn=Some+Name+S01") == "Some Name S01"
