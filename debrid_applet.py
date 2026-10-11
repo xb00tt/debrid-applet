@@ -1849,6 +1849,7 @@ class App:
         except OSError:
             pass
         self._polling = False  # a poll is in flight; refresh() then only asks for another one afterwards
+        self.restart_requested = False  # set by restart(); main() re-execs this file after the main loop ends
         self._refresh_again = False
         self._timer = 0
         self._interval = POLL_SLOW
@@ -2185,8 +2186,71 @@ class App:
         return True
 
     def update_to(self, release):
-        """Replaced in the next task."""
-        self._dialog("Not yet", "Self-update arrives in the next commit.")
+        """Download the asset for this kind of install and install it; the user confirms the restart.
+        .deb: pkexec + apt-get (one password prompt). Per-user copy: files replaced in place. Git checkout: told to pull."""
+        v = ".".join(map(str, release.version))
+        mode = install_mode(HERE)
+        tab = self.current_tab()
+        if mode == "git":
+            self._dialog(f"Debrid Applet {v} is available", f"This is a git checkout: run git pull in {HERE}.")
+            return
+        asset = release.deb if mode == "deb" else release.tar
+        if asset is None:
+            self._dialog("No package in this release", f"Release {v} has no {'.deb' if mode == 'deb' else 'tarball'} for this install.")
+            return
+        updates = os.path.join(DATA_DIR, "updates")
+        tab.say(f"Downloading update {v}…")
+
+        def installed(err=None, path=None):
+            if err:
+                tab.say(f"Update failed: {err}", error=True)
+                self._dialog("Update failed", err)
+                return
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+            tab.say(f"Debrid Applet {v} installed")
+            notify(f"Debrid Applet {v} installed", "Restart to use it.")
+            if self._ask(f"Debrid Applet {v} is installed. Restart now?", "Restart"):
+                self.restart()
+
+        def after_download(path, err):
+            if err:
+                installed(err)
+                return
+            if mode == "user":
+                run_async(lambda: install_user(path, HERE), lambda _r, e: installed(e, path))
+                return
+            tab.say(f"Installing update {v}… (password prompt)")
+            log_path = os.path.join(updates, "apt.log")
+            try:
+                with open(os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "ab") as log:
+                    proc = subprocess.Popen(deb_command(path), stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+            except OSError as e:
+                installed(f"cannot run pkexec: {e.strerror}")
+                return
+
+            def finished(code):
+                if code == 0:
+                    installed(None, path)
+                elif code in (126, 127):  # pkexec: dismissed or not authorised
+                    tab.say("Update cancelled: authentication did not complete", error=True)
+                else:
+                    tab.say(f"Update failed: apt-get exited {code}, see {log_path}", error=True)
+                    if self._ask(f"apt-get exited with code {code} (details in {log_path}).\n"
+                                 "Copy the command to install it yourself?", "Copy sudo command"):
+                        copy_text(f"sudo apt install {shlex.quote(path)}")
+            threading.Thread(target=lambda: GLib.idle_add(finished, proc.wait()), daemon=True).start()
+        run_async(lambda: download(asset, updates), after_download)
+
+    def restart(self):
+        """Quit and let main() exec this file again: same PID, the bus name is freed by the exec, so the new
+        process becomes the primary instance instead of being forwarded to a dying one."""
+        self.hide_window()
+        self.restart_requested = True
+        self.gapp.quit()
 
     def open_about(self, *_):
         dlg = Gtk.AboutDialog(transient_for=self.window, modal=True, program_name="Debrid Applet", version=VERSION,
@@ -2599,6 +2663,8 @@ def main():
         return 0
     gapp.connect("command-line", on_cmdline)
     gapp.run(sys.argv)
+    if "app" in state and state["app"].restart_requested:  # an update was installed: become the new version
+        os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
 
 
 if __name__ == "__main__":
