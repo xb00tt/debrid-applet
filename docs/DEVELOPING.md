@@ -6,7 +6,8 @@
 python3 test_debrid_api.py
 ```
 
-Offline tests with canned API responses, no GTK needed; the same suite runs on GitHub Actions for every push
+Offline tests with canned API responses, no GTK needed (install `python3-defusedxml` too to run the feed parser the package
+uses); the same suite runs on GitHub Actions for every push
 (`.github/workflows/tests.yml`). The GTK side has no unit tests: it is checked by rendering a `ServiceTab` with sample
 rows into a `Gtk.OffscreenWindow` and by driving the running applet with `xdotool` plus screenshots. `xdotool type`
 mangles `[` and `|` on some keyboard layouts, so use the clipboard or bracket-free paths when scripting dialogs.

@@ -22,7 +22,7 @@ Version: $VERSION
 Section: net
 Priority: optional
 Architecture: all
-Depends: python3 (>= 3.11), python3-gi, gir1.2-gtk-3.0, gir1.2-xapp-1.0, gir1.2-notify-0.7, python3-requests
+Depends: python3 (>= 3.11), python3-gi, gir1.2-gtk-3.0, gir1.2-xapp-1.0, gir1.2-notify-0.7, python3-requests, python3-defusedxml
 Recommends: mpv | vlc | celluloid, aria2
 Maintainer: xb00tt <borislav.bg@gmail.com>
 Homepage: https://github.com/xb00tt/debrid-applet
