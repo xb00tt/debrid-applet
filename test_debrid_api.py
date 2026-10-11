@@ -1263,25 +1263,27 @@ def test_update_verify_signature():
     assert du.SIGNING_KEYS and all(k.startswith("ssh-ed25519 ") for k in du.SIGNING_KEYS)  # the project key is embedded
     path = os.path.join(root, "release.deb")
     open(path, "wb").write(b"deb-bytes")
-    subprocess.run(["ssh-keygen", "-Y", "sign", "-f", os.path.join(root, "good"), "-n", du.SIGN_NAMESPACE, path], check=True, capture_output=True)
-    du.verify_signature(path, path + ".sig", keys=(key,))  # a good signature passes quietly
-    du.verify_signature(path, path + ".sig", keys=("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA old", key))  # any embedded key
-    for label, fn in (("tampered file", lambda: open(path, "ab").write(b"!")),
-                      ("another key", lambda: open(path, "wb").write(b"deb-bytes"))):
+    assert du.sign_namespace("9.9.9") == "debrid-applet-9.9.9"  # the signature names the version it belongs to
+    subprocess.run(["ssh-keygen", "-Y", "sign", "-f", os.path.join(root, "good"), "-n", du.sign_namespace("9.9.9"), path], check=True, capture_output=True)
+    du.verify_signature(path, path + ".sig", "9.9.9", keys=(key,))  # a good signature passes quietly
+    du.verify_signature(path, path + ".sig", "9.9.9", keys=("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA old", key))  # any embedded key
+    for label, fn, version in (("re-tagged as another version", lambda: None, "9.9.10"),  # a signed old asset cannot pose as a newer release
+                               ("tampered file", lambda: open(path, "ab").write(b"!"), "9.9.9"),
+                               ("another key", lambda: open(path, "wb").write(b"deb-bytes"), "9.9.9")):
         fn()
-        keys = (key,) if label == "tampered file" else (open(os.path.join(root, "other.pub")).read().strip(),)
+        keys = (open(os.path.join(root, "other.pub")).read().strip(),) if label == "another key" else (key,)
         try:
-            du.verify_signature(path, path + ".sig", keys=keys)
+            du.verify_signature(path, path + ".sig", version, keys=keys)
             assert False, label
         except ApiError as e:
             assert "not signed by the project key" in str(e), (label, str(e))
     try:
-        du.verify_signature(path, os.path.join(root, "missing.sig"), keys=(key,))
+        du.verify_signature(path, os.path.join(root, "missing.sig"), "9.9.9", keys=(key,))
         assert False
     except ApiError as e:
         assert "not signed by the project key" in str(e)
     try:
-        du.verify_signature(path, path + ".sig", keys=(key,), tool="/nonexistent/ssh-keygen")
+        du.verify_signature(path, path + ".sig", "9.9.9", keys=(key,), tool="/nonexistent/ssh-keygen")
         assert False
     except ApiError as e:
         assert "Cannot verify" in str(e)

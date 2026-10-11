@@ -2328,7 +2328,7 @@ class App:
 
         def fetch():  # the file and its signature, checked before anything else touches them
             path = download(asset, updates)
-            verify_signature(path, download(sig, updates))
+            verify_signature(path, download(sig, updates), v)
             return path
 
         def installed(err=None, path=None):

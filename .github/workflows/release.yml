@@ -33,9 +33,10 @@ jobs:
           test -n "$RELEASE_SIGNING_KEY" || { echo "RELEASE_SIGNING_KEY secret is missing"; exit 1; }
           umask 077
           printf '%s\n' "$RELEASE_SIGNING_KEY" > "$RUNNER_TEMP/release-key"
-          for f in dist/*.deb dist/*.tar.gz; do ssh-keygen -Y sign -f "$RUNNER_TEMP/release-key" -n debrid-applet "$f"; done
+          V="${GITHUB_REF_NAME#v}"
+          for f in dist/*.deb dist/*.tar.gz; do ssh-keygen -Y sign -f "$RUNNER_TEMP/release-key" -n "debrid-applet-$V" "$f"; done
           shred -u "$RUNNER_TEMP/release-key"
-          for f in dist/*.deb dist/*.tar.gz; do python3 -c "import sys, debrid_update as du; du.verify_signature(sys.argv[1], sys.argv[1] + '.sig'); print('verified', sys.argv[1])" "$f"; done
+          for f in dist/*.deb dist/*.tar.gz; do python3 -c "import sys, debrid_update as du; du.verify_signature(sys.argv[1], sys.argv[1] + '.sig', sys.argv[2]); print('verified', sys.argv[1])" "$f" "$V"; done
           ls -l dist
       - name: Publish the release
         env:

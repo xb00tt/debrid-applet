@@ -20,7 +20,13 @@ TIMEOUT = 15
 # Releases are signed with OpenSSH signatures (ssh-keygen -Y sign); any of these public keys may have signed one.
 # Rotation: ship the new key here in a release signed by the old one, then sign with the new one.
 SIGNING_KEYS = ("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBqWO2K0QoJHnjZ3kxzI+XVafzggQGw/WEnYWh64xjzZ",)
-SIGN_NAMESPACE = "debrid-applet"
+SIGN_PRINCIPAL = "debrid-applet"  # the identity in the allowed-signers list
+
+
+def sign_namespace(version):
+    """Namespace a release's signatures are made in: it names the version, so a signed asset of an older release
+    cannot be served as a newer one (the signature would be for the wrong namespace)."""
+    return f"debrid-applet-{version}"
 
 
 @dataclass
@@ -86,14 +92,14 @@ def latest_release(current, session=None):
                    deb=pick("_all.deb"), tar=pick(".tar.gz"), deb_sig=pick("_all.deb.sig"), tar_sig=pick(".tar.gz.sig"))
 
 
-def verify_signature(path, sig_path, keys=SIGNING_KEYS, tool="ssh-keygen"):
-    """ssh-keygen -Y verify of path against sig_path with the project keys; ApiError when it does not verify.
-    Runs before anything is installed, on the very file the install then uses."""
+def verify_signature(path, sig_path, version, keys=SIGNING_KEYS, tool="ssh-keygen"):
+    """ssh-keygen -Y verify of path against sig_path with the project keys, in the namespace of version; ApiError when
+    it does not verify. Runs before anything is installed, on the very file the install then uses."""
     with tempfile.NamedTemporaryFile("w", suffix=".allowed_signers", delete=False) as allowed:
-        allowed.write("".join(f"{SIGN_NAMESPACE} {k}\n" for k in keys))
+        allowed.write("".join(f"{SIGN_PRINCIPAL} {k}\n" for k in keys))
     try:
         with open(path, "rb") as data:
-            result = subprocess.run([tool, "-Y", "verify", "-f", allowed.name, "-I", SIGN_NAMESPACE, "-n", SIGN_NAMESPACE,
+            result = subprocess.run([tool, "-Y", "verify", "-f", allowed.name, "-I", SIGN_PRINCIPAL, "-n", sign_namespace(version),
                                      "-s", sig_path], stdin=data, capture_output=True, text=True)
     except OSError as e:
         raise ApiError(f"Cannot verify the signature: {e.strerror}") from e
