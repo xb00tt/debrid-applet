@@ -239,6 +239,13 @@ def test_rd_select_failure_keeps_list():
     rd = RealDebrid("t", s)
     assert rd.torrents()[0]["state"].startswith("Error: select failed: Rate limited")
     assert rd.torrents()[0]["state"] == "Queued" and len(s.calls) == 4  # a transient failure is retried on the next poll
+    item = [{"id": "B", "filename": "b.iso", "status": "waiting_files_selection"}]
+    for bad in (FakeResp(503, {}), FakeResp(502, None), FakeResp(503, {"error": "service_unavailable", "error_code": 25}),
+                FakeResp(403, {"error": "too_many_active_downloads", "error_code": 21}), FakeResp(400, {"error": "unknown_new_code"})):
+        s = FakeSession(FakeResp(200, item), bad, FakeResp(200, item), FakeResp(204))
+        rd = RealDebrid("t", s)
+        assert rd.torrents()[0]["state"].startswith("Error: select failed")
+        assert rd.torrents()[0]["state"] == "Queued" and len(s.calls) == 4, bad.status_code  # anything not known-permanent is retried
 
 
 def test_links_partial_on_rate_limit():

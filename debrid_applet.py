@@ -441,7 +441,8 @@ def is_public_host(host):
 def fetch_bytes(url, max_bytes, allow_private=False, deadline=90):
     """_fetch_bytes on its own daemon thread with a total deadline: the per-read timeout never fires on a server that
     trickles bytes, so after deadline seconds the caller gets an ApiError and the stuck thread is left to die with
-    its connection (ponytail: one leaked thread per such server, instead of a blocked worker)."""
+    its connection (ponytail: one leaked thread per timed-out fetch; it ends when the server closes, a read stalls
+    past 20 s, or max_bytes is exceeded)."""
     out = {}
 
     def work():
@@ -2299,6 +2300,8 @@ class App:
             tab.say(f"Debrid Applet {v} installed")
             if self._ask(f"Debrid Applet {v} is installed. Restart now?", "Restart"):
                 self.restart()
+            else:  # the window may be hidden and automatic checks stay quiet now: leave one reminder with a button
+                notify(f"Debrid Applet {v} installed", "Restart to use it.", [("Restart", self.restart)])
 
         def after_download(path, err):
             if err:

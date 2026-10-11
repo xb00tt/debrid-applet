@@ -22,6 +22,9 @@ TB_STATES = {"metadl": QUEUED, "checkingresumedata": QUEUED, "downloading": DOWN
              "expired": EXPIRED, "failed": ERROR}
 AD_STATES = {"in queue": QUEUED, "downloading": DOWNLOADING, "compressing / moving": PROCESSING, "uploading": PROCESSING,
              "ready": DONE}
+# selectFiles answers that will not change by asking again; anything else (5xx, rate limit, "too many active downloads",
+# a code this list does not know) is retried on the next poll.
+RD_PERMANENT_SELECT_ERRORS = ("infringing_file", "file_not_allowed", "torrent_too_big", "torrent_file_invalid")
 
 
 def state_label(raw, table):
@@ -195,7 +198,7 @@ class RealDebrid(_Client):
                         self._select_all(t["id"])
                     except ApiError as e:
                         err = str(e)
-                        if not err.startswith(("Rate limited", "Network error")):  # transient ones are retried next poll
+                        if err in RD_PERMANENT_SELECT_ERRORS:
                             self._select_failed[t["id"]] = err
                 if err:
                     state = f"{ERROR}: select failed: {err}"
