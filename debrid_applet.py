@@ -31,7 +31,8 @@ gi.require_version("XApp", "1.0")
 from gi.repository import Gdk, Gio, GLib, Gtk, Notify, Pango, XApp  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-from debrid_api import INVALID_KEY, AllDebrid, ApiError, RealDebrid, Torbox, human_size, magnet_hash  # noqa: E402
+from debrid_api import (DONE, DOWNLOADING, ERROR, EXPIRED, INVALID_KEY, PROCESSING, QUEUED, SEEDING, STALLED,  # noqa: E402
+                        AllDebrid, ApiError, RealDebrid, Torbox, human_size, magnet_hash)
 from debrid_local_api import LocalApi  # noqa: E402
 from debrid_update import deb_command, download, install_mode, install_user, latest_release  # noqa: E402
 
@@ -46,6 +47,11 @@ SUB_EXT = (".srt", ".ass", ".vtt", ".sub")
 CLIENTS = ((Torbox, "torbox_key"), (RealDebrid, "realdebrid_key"), (AllDebrid, "alldebrid_key"))  # class, config key
 SERVICES = tuple(c.name for c, _k in CLIENTS)
 KEY_FIELDS = tuple(k for _c, k in CLIENTS)
+SERVICE_SHORT = {c.name: c.short for c, _k in CLIENTS}  # Service column on the All tab, unless Settings asks for full names
+
+
+def service_label(name, cfg):
+    return name if cfg.get("service_full_names") else SERVICE_SHORT.get(name, name)
 DASHBOARDS = {"Torbox": "https://torbox.app/dashboard", "Real-Debrid": "https://real-debrid.com/torrents",
               "AllDebrid": "https://alldebrid.com/magnets"}
 SERVICE_COLORS = {"Torbox": "#e8761b", "Real-Debrid": "#3b82f6", "AllDebrid": "#a855f7"}  # Service column on the All tab
@@ -79,6 +85,7 @@ EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "no
                 "player_command": "",  # custom Play target, e.g. "stremio {url}" or "kodi-send --action=PlayMedia({url})"
                 "start_tab": "All",  # tab shown when the window opens
                 "check_updates": True, "update_skip": "",  # daily GitHub release check; version the user chose to skip
+                "service_full_names": False,  # All tab: "Torbox" instead of "TB" in the Service column
                 "config_version": 2,  # bumped when the layout changes; see migrate_config()
                 "notified_expiry": {}}  # service -> expiry date already warned about
 POLL_FAST, POLL_SLOW = 8, 60  # seconds between polls while something is active / when everything is idle
@@ -713,11 +720,12 @@ COLUMNS = (
     ("added", "Added", 12, "text", 20),
     ("finished", "Finished", 13, "text", 21),
 )
-ABSOLUTE = {"added": 20, "finished": 21}  # store columns holding the full local time for the tooltip
+TOOLTIP_COLUMNS = {"added": 20, "finished": 21, "state": 24}  # store columns shown on hover: full local time, raw state
 STORE_TYPES = (str, str, int, str, str, str, bool,  # 0 id, 1 name, 2 progress, 3 state, 4 size, 5 kind, 6 checked
                str, str, str, str, str, str, str,   # 7 dl, 8 ul, 9 seeds, 10 peers, 11 ratio, 12 added, 13 finished
                float, float, float, int, int, float,  # 14 size, 15 dl, 16 ul, 17 seeds, 18 peers, 19 ratio (raw)
-               str, str, str, str)  # 20 added, 21 finished (absolute local time), 22 hash, 23 service
+               str, str, str, str,  # 20 added, 21 finished (absolute local time), 22 hash, 23 service
+               str)  # 24 the service's own state word, for the tooltip
 CHECKED, STATUS_HOLD = 6, 8  # store column of the checkbox; seconds an action message stays before polls overwrite it
 NUMERIC = ("dl", "ul", "seeds", "peers", "ratio", "size")  # right-aligned
 WIDTHS = {"check": 28, "service": 95, "name": 120, "dl": 85, "ul": 85, "progress": 90, "seeds": 60, "peers": 60, "ratio": 60,
@@ -737,8 +745,20 @@ def added_within(iso, window, now=None):
     return dt is None or (now or datetime.now(timezone.utc)) - dt <= timedelta(days=TIME_WINDOW[window])
 
 
-STATE_FILTERS = (("all", "All states"), ("active", "Active"), ("done", "Done"), ("seed", "Seeding"),
-                 ("warn", "Stalled"), ("error", "Error"))
+ADDING = "Adding"  # placeholder rows, until the service lists the item
+STATE_FILTERS = (("all", "All states"),) + tuple((l, l) for l in (QUEUED, DOWNLOADING, PROCESSING, DONE, SEEDING, STALLED, EXPIRED, ERROR))
+LABEL_KIND = {QUEUED: "active", DOWNLOADING: "active", PROCESSING: "active", ADDING: "active", DONE: "done", SEEDING: "seed",
+              STALLED: "warn", EXPIRED: "warn", ERROR: "error"}
+
+
+def label_of(state):
+    """The unified label inside a State cell: 'Error: File too big' -> 'Error', 'Done (web)' -> 'Done'."""
+    return state.split(":", 1)[0].split(" (", 1)[0]
+
+
+def state_matches(state, key):
+    """Dropdown rule: 'all', or the cell's label is the chosen one."""
+    return key == "all" or label_of(state) == key
 CSS = b"""
 treeview.view.progressbar { background-color: #e8761b; border-color: #e8761b; color: #ffffff; }
 treeview.view.progressbar:selected { background-color: #ffffff; border-color: #ffffff; color: #e8761b; }
@@ -758,7 +778,10 @@ def column_layout(columns, name):
 
 
 def state_kind(state):
-    """Bucket a raw service state string into a PALETTE key."""
+    """PALETTE bucket of a State cell: by unified label, else by keywords for a word no table knew."""
+    kind = LABEL_KIND.get(label_of(state))
+    if kind:
+        return kind
     s = state.lower()
     if any(w in s for w in ("error", "dead", "virus", "failed")):
         return "error"
@@ -1014,7 +1037,7 @@ class ServiceTab(Gtk.Box):
             self.app.set_columns(self, sort=[key, "desc" if direction == Gtk.SortType.DESCENDING else "asc"])
 
     def on_query_tooltip(self, view, x, y, keyboard, tooltip):
-        """Hovering a relative date shows the full local time."""
+        """Hovering a relative date shows the full local time; hovering a State cell, the service's own word."""
         if keyboard:
             return False
         hit = view.get_path_at_pos(*view.convert_widget_to_bin_window_coords(x, y))
@@ -1022,7 +1045,7 @@ class ServiceTab(Gtk.Box):
             return False
         path, col = hit[0], hit[1]
         key = next((k for k, c in self.cols.items() if c is col), None)
-        idx = ABSOLUTE.get(key)
+        idx = TOOLTIP_COLUMNS.get(key)
         text = self.store[path][idx] if idx is not None else ""
         if not text:
             return False
@@ -1056,6 +1079,7 @@ class ServiceTab(Gtk.Box):
         kind = state_kind(model[it][3])
         if key == "service":
             cell.set_property("foreground", SERVICE_COLORS.get(model[it][23], PALETTE["done"]))
+            cell.set_property("text", service_label(model[it][23], self.app.cfg))  # the store keeps the full name
             cell.set_property("weight", Pango.Weight.BOLD)
         elif key == "state":
             cell.set_property("foreground", PALETTE[kind])
@@ -1236,6 +1260,7 @@ class ServiceTab(Gtk.Box):
             int(t["seeds"]), -1 if t["peers"] is None else int(t["peers"]),
             -1.0 if t["ratio"] is None else float(t["ratio"]),
             local_time(t["added"]), local_time(t["finished"]), t["hash"], t.get("service", self.name),
+            t.get("raw_state", ""),
         ]
 
     def _fill(self):
@@ -1249,7 +1274,7 @@ class ServiceTab(Gtk.Box):
         self._pending = [(exp, row) for exp, row in self._pending if now < exp]
         rows = [t for t in [row for _exp, row in self._pending] + self.torrents  # placeholders first
                 if not (q and q not in t["name"].lower() and q not in t["state"].lower())
-                and not (kind != "all" and state_kind(t["state"]) != kind)
+                and state_matches(t["state"], kind)
                 and added_within(t["added"], window, utc_now)]
         if self._shown_key == (q, kind, window) and self._iters:
             wanted = {t["id"] for t in rows}
@@ -1430,7 +1455,7 @@ class ServiceTab(Gtk.Box):
             self.say(msg, error=bool(errors))
             for name in added:  # show something at once; the real row replaces it on the next poll
                 self._pending.append((time.monotonic() + 30, {
-                    "id": f"pending:{name}", "name": name, "progress": 0, "state": "adding…", "done": False,
+                    "id": f"pending:{name}", "name": name, "progress": 0, "state": ADDING, "done": False,
                     "size": 0, "seeds": 0, "speed": 0, "kind": "torrent", "up_speed": None, "peers": None,
                     "ratio": None, "added": datetime.now(timezone.utc).isoformat(), "finished": "", "hash": ""}))
             self._fill()
@@ -2431,6 +2456,7 @@ class SettingsForm:
         self._combo(g, "start_tab", "Tab on start-up", [("All", "All")] + [(s, s) for s in SERVICES])
         self._check(g, "watch_clipboard", "Watch the clipboard for magnet links")
         self._check(g, "remember_filter", "Remember the state filter between runs")
+        self._check(g, "service_full_names", "Full service names in the All tab (otherwise TB / RD / AD)")
         self._combo(g, "time_filter", "Show items added within", list(TIME_FILTERS))
         self._heading(g, "Playback")
         self._check(g, "dblclick_play", "Double-click plays videos (otherwise opens Files)")

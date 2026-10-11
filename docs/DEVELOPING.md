@@ -48,8 +48,8 @@ release; `debrid_update.FILES` is the required minimum and must match the copy l
 
 ## Adding a service
 
-One client class in `debrid_api.py` implementing `account`, `torrents`, `add_magnet`, `add_torrent_file`,
-`add_link`, `links`, `delete` (optionally `check_cached` and `control`), then in `debrid_applet.py`: an entry in
+One client class in `debrid_api.py` with `name` and `short` (the All tab's two-letter label) implementing `account`,
+`torrents`, `add_magnet`, `add_torrent_file`, `add_link`, `links`, `delete` (optionally `check_cached` and `control`), then in `debrid_applet.py`: an entry in
 `CLIENTS` (class and config key; tabs, `SERVICES` and `KEY_FIELDS` derive from it), the key's default in `EMPTY_CONFIG`,
 a key field in the Settings form, and a default in `DEFAULT_HIDDEN` for columns it never reports. Verify it against the live API
 before shipping; every service so far needed fixes that only real keys exposed. See `../TODO.md` for what is not planned.

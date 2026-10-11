@@ -36,8 +36,11 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 
 ## Finding things
 
-- Filter box matches name or state as you type; the dropdown next to it narrows by state
-  (Active / Done / Seeding / Stalled / Error); the dropdown choice is remembered per service (toggle in Settings). `Ctrl+F` focuses the box, `Esc` clears it.
+- Filter box matches name or state as you type; the dropdown next to it narrows by state. Every service's own
+  words are mapped to one set: Queued / Downloading / Processing online / Done / Seeding / Stalled / Expired / Error
+  (an error keeps the service's reason, e.g. "Error: File too big"; Torbox web downloads read "Done (web)"); hover a
+  State cell for the word the service used. The dropdown choice is remembered per service (toggle in Settings).
+  `Ctrl+F` focuses the box, `Esc` clears it.
 - The second dropdown shows only items added within the last 24 hours / 7 days / 30 days, or any time. Each run,
   and every Settings save, starts at the default from Settings (7 days unless you change it); items whose added date
   is unknown always show.
@@ -133,6 +136,7 @@ Right-click the tray icon → **Settings…**, or the gear in the toolbar. Four 
 
 - **Accounts**: the three API keys with **Test keys**.
 - **Behaviour**: notifications (added, finished), tab on start-up, clipboard watcher, remembered state filter,
+  full service names in the All tab (TB / RD / AD by default),
   default added-within window, double-click plays videos, custom play command.
 - **Automation**: watch folder and its target service; RSS feeds and their interval; what happens when an item
   finishes (auto-download, videos only, delete afterwards, download folder; Torbox stop seeding).

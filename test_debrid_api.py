@@ -67,7 +67,7 @@ def test_rd_auth_header():
 
 def test_rd_account():
     s = FakeSession(FakeResp(200, {"type": "premium", "expiration": "2027-01-03T10:00:00.000Z", "points": 1234}))
-    assert RealDebrid("t", s).account() == {"plan": "premium", "expires": "2027-01-03", "extra": "1234 points"}
+    assert RealDebrid("t", s).account() == {"plan": "Premium", "expires": "2027-01-03", "extra": "1234 points"}
     assert s.calls[0][:2] == ("GET", RD + "/user")
     assert s.calls[0][2]["timeout"] == 15
 
@@ -80,9 +80,11 @@ def test_rd_torrents_normalize_and_autoselect():
         {"id": "C", "filename": "c.zip", "progress": 100, "status": "downloaded", "bytes": 5, "ended": "2026-10-02T11:00:00.000Z"},
     ]), FakeResp(204))
     out = RealDebrid("t", s).torrents()
-    assert out[0] == {"id": "A", "name": "a.mkv", "progress": 42.5, "state": "downloading", "done": False,
+    assert out[0] == {"id": "A", "name": "a.mkv", "progress": 42.5, "state": "Downloading", "done": False,
                       "size": 1000, "seeds": 3, "speed": 50, "kind": "torrent", "up_speed": None, "peers": None,
-                      "ratio": None, "added": "2026-10-01T10:00:00.000Z", "finished": "", "hash": "abc123"}
+                      "ratio": None, "added": "2026-10-01T10:00:00.000Z", "finished": "", "hash": "abc123",
+                      "raw_state": "downloading"}
+    assert out[1]["state"] == "Queued" and out[1]["raw_state"] == "waiting_files_selection" and out[2]["state"] == "Done"
     assert out[1]["hash"] == ""
     assert out[2]["finished"] == "2026-10-02T11:00:00.000Z" and out[2]["added"] == ""
     assert out[1]["seeds"] == 0 and out[1]["done"] is False
@@ -204,7 +206,7 @@ def test_rd_select_failure_keeps_list():
     ]), FakeResp(403, {"error": "infringing_file", "error_code": 35}))
     out = RealDebrid("t", s).torrents()
     assert [t["id"] for t in out] == ["B", "C"]
-    assert out[0]["state"] == "select failed: infringing_file"
+    assert out[0]["state"] == "Error: select failed: infringing_file"
 
 
 def test_links_partial_on_rate_limit():
@@ -265,10 +267,10 @@ def test_network_error():
 
 def test_ad_account():
     s = FakeSession(ad_ok({"user": {"isPremium": True, "isTrial": True, "premiumUntil": 1760745600, "fidelityPoints": 12}}))
-    assert AllDebrid("t", s).account() == {"plan": "trial", "expires": "2025-10-18", "extra": "12 points"}
+    assert AllDebrid("t", s).account() == {"plan": "Trial", "expires": "2025-10-18", "extra": "12 points"}
     assert s.calls[0][:2] == ("GET", AD + "/v4/user")
     assert s.calls[0][2]["headers"] if "headers" in s.calls[0][2] else s.headers["Authorization"] == "Bearer t"
-    assert AllDebrid("t", FakeSession(ad_ok({"user": {"isPremium": False, "premiumUntil": 0}}))).account()["plan"] == "free"
+    assert AllDebrid("t", FakeSession(ad_ok({"user": {"isPremium": False, "premiumUntil": 0}}))).account()["plan"] == "Free"
 
 
 def test_ad_torrents_normalize():
@@ -283,10 +285,11 @@ def test_ad_torrents_normalize():
     assert s.calls[0][:2] == ("POST", AD + "/v4.1/magnet/status")
     assert out[0] == {"id": "11", "name": "a.iso", "progress": 25.0, "state": "Downloading", "done": False, "size": 1000,
                       "seeds": 7, "speed": 500, "kind": "torrent", "up_speed": 20, "peers": None, "ratio": None,
-                      "added": "2025-10-09T08:53:20Z", "finished": "", "hash": ""}
+                      "added": "2025-10-09T08:53:20Z", "finished": "", "hash": "", "raw_state": "Downloading"}
     assert out[1]["done"] is True and out[1]["progress"] == 100.0 and out[1]["finished"] == "2025-10-09T09:53:20Z"
-    assert out[2]["state"] == "error: File too big" and out[2]["done"] is False
-    assert out[3]["state"] == "In Queue"
+    assert out[1]["state"] == "Done" and out[1]["raw_state"] == "Ready"
+    assert out[2]["state"] == "Error: File too big" and out[2]["done"] is False
+    assert out[3]["state"] == "Queued" and out[3]["raw_state"] == "In Queue"
 
 
 def test_ad_add_magnet_and_file(tmp_path="/tmp/debrid-test.torrent"):
@@ -366,13 +369,23 @@ def test_tb_torrents_merges_webdl():
              "download_finished": True, "download_present": True, "size": 5}]),
     )
     out = Torbox("t", s).torrents()
-    assert out[0] == {"id": "7", "name": "seven.mkv", "progress": 25.0, "state": "downloading", "done": False,
+    assert out[0] == {"id": "7", "name": "seven.mkv", "progress": 25.0, "state": "Downloading", "done": False,
                       "size": 2000, "seeds": 9, "speed": 300, "kind": "torrent", "up_speed": 10, "peers": 4,
-                      "ratio": 0.5, "added": "2026-10-02T00:00:00Z", "finished": "", "hash": "def456"}
+                      "ratio": 0.5, "added": "2026-10-02T00:00:00Z", "finished": "", "hash": "def456",
+                      "raw_state": "downloading"}
     assert out[1]["done"] is True and out[1]["progress"] == 100.0 and out[1]["finished"] == "2026-10-04T00:00:00Z"
-    assert out[2] == {"id": "3", "name": "web.bin", "progress": 100.0, "state": "web: completed", "done": True,
+    assert out[1]["state"] == "Seeding"  # Torbox "uploading" on a finished torrent is seeding, not an upload to the service
+    assert out[2] == {"id": "3", "name": "web.bin", "progress": 100.0, "state": "Done (web)", "done": True,
                       "size": 5, "seeds": 0, "speed": 0, "kind": "webdl", "up_speed": 0, "peers": 0, "ratio": 0.0,
-                      "added": "", "finished": "", "hash": ""}
+                      "added": "", "finished": "", "hash": "", "raw_state": "completed"}
+    s = FakeSession(ok([{"id": 1, "name": "a", "download_state": "metaDL"}, {"id": 2, "name": "b", "download_state": "stalled (no seeds)"},
+                        {"id": 3, "name": "c", "download_state": "expired", "download_finished": True},
+                        {"id": 4, "name": "d", "download_state": "somethingNew"}, {"id": 5, "name": "e", "download_state": "missing files, failed"},
+                        {"id": 6, "name": "f", "download_state": "uploading (no peers)", "download_finished": True, "download_present": True},
+                        {"id": 7, "name": "g", "download_state": "downloading (no peers)"}]), ok([]))
+    out = Torbox("t", s).torrents()
+    assert [t["state"] for t in out] == ["Queued", "Stalled", "Expired", "SomethingNew", "Error: missing files, failed", "Seeding", "Downloading"]
+    assert out[5]["raw_state"] == "uploading (no peers)"  # the suffix survives for the tooltip
     assert s.calls[0][:2] == ("GET", TB + "/torrents/mylist")
     assert s.calls[0][2]["params"] == {"bypass_cache": "true", "limit": 5000}
     assert s.calls[1][:2] == ("GET", TB + "/webdl/mylist")
@@ -575,7 +588,7 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
                 "stop_seeding_when_done": False, "auto_download_videos_only": False, "delete_after_download": False,
                 "route_cached": False, "config_version": 2,
                 "feeds": "", "feed_interval_min": 15, "feed_seen": [], "player_command": "", "start_tab": "All",
-                "time_filter": "week", "check_updates": True, "update_skip": ""}
+                "time_filter": "week", "check_updates": True, "update_skip": "", "service_full_names": False}
     assert debrid_applet.load_config() == defaults
     debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b", "notify_done": False})
     assert debrid_applet.column_layout({}, "AllDebrid")["hidden"] == ["peers", "ratio"]
@@ -653,21 +666,23 @@ def test_local_time_and_cell_formats():
 def test_state_kind_buckets():
     import debrid_applet
     k = debrid_applet.state_kind
-    assert k("downloading") == "active" and k("metaDL") == "active" and k("queued") == "active"
-    assert k("waiting_files_selection") == "active" and k("magnet_conversion") == "active"
-    assert k("In Queue") == "active" and k("Ready") == "done" and k("error: File too big") == "error"
-    assert k("adding…") == "active"
-    assert k("downloaded") == "done" and k("cached") == "done" and k("web: completed") == "done"
-    assert k("uploading (no peers)") == "seed"
-    assert k("stalled (no seeds)") == "warn" and k("paused") == "warn"
-    assert k("error") == "error" and k("magnet_error") == "error" and k("dead") == "error" and k("virus") == "error"
-    assert k("select failed: infringing_file") == "error"
-    assert debrid_applet.is_active({"done": False, "state": "downloading"}) and not debrid_applet.is_active({"done": True})
-    assert not debrid_applet.is_active({"done": False, "state": "error: File too big"})  # never finishes, needs no fast polls
-    assert not debrid_applet.is_active({"done": False, "state": "expired"})  # Torbox removed the files: nothing moving
-    assert not debrid_applet.is_active({"done": False, "state": "stalled (no seeds)"})  # same rule as the Active dropdown
-    assert k("stopped seeding") == "done" and k("expired") == "done"
-    assert k("") == "done"
+    assert k("Queued") == "active" and k("Downloading") == "active" and k("Processing online") == "active" and k("Adding") == "active"
+    assert k("Done") == "done" and k("Done (web)") == "done" and k("Seeding") == "seed"
+    assert k("Stalled") == "warn" and k("Expired") == "warn"
+    assert k("Error") == "error" and k("Error: File too big") == "error" and k("Error: select failed: x") == "error"
+    # words no table knows fall back to keyword rules, so an unexpected service state never hides a row
+    assert k("metaDL") == "active" and k("stalled (no seeds)") == "warn" and k("uploading (no peers)") == "seed"
+    assert k("Ready") == "done" and k("") == "done" and k("virus") == "error"
+    assert debrid_applet.is_active({"done": False, "state": "Downloading"}) and not debrid_applet.is_active({"done": True})
+    assert debrid_applet.is_active({"done": False, "state": "Processing online"})
+    assert not debrid_applet.is_active({"done": False, "state": "Error: File too big"})  # never finishes, needs no fast polls
+    assert not debrid_applet.is_active({"done": False, "state": "Expired"})  # Torbox removed the files: nothing moving
+    assert not debrid_applet.is_active({"done": False, "state": "Stalled"})  # not moving either
+    assert [l for _key, l in debrid_applet.STATE_FILTERS] == ["All states", "Queued", "Downloading", "Processing online",
+                                                              "Done", "Seeding", "Stalled", "Expired", "Error"]
+    m = debrid_applet.state_matches  # the dropdown matches the label, ignoring an error detail or the (web) suffix
+    assert m("Error: File too big", "Error") and m("Done (web)", "Done") and m("Done", "Done") and m("anything", "all")
+    assert not m("Done", "Error") and not m("Downloading", "Done") and not m("Adding", "Downloading")
     assert set(debrid_applet.PALETTE) == {"active", "done", "seed", "warn", "error"}
 
 
@@ -1241,6 +1256,14 @@ def test_update_install_user_from_tarball():
     finally:
         os.chmod(ro, 0o700)
     assert os.listdir(ro) == []
+
+
+def test_service_label():
+    import debrid_applet as da
+    assert [c.short for c, _k in da.CLIENTS] == ["TB", "RD", "AD"]
+    assert da.service_label("Torbox", {}) == "TB" and da.service_label("Real-Debrid", {}) == "RD" and da.service_label("AllDebrid", {}) == "AD"
+    assert da.service_label("Torbox", {"service_full_names": True}) == "Torbox"
+    assert da.service_label("Premiumize", {}) == "Premiumize"  # a service without a short form keeps its name
 
 
 def test_add_label():

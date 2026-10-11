@@ -11,6 +11,31 @@ USER_AGENT = "debrid-applet"
 INVALID_KEY = "Invalid API key"
 TORBOX_AUTH_ERRORS = ("NO_AUTH", "BAD_TOKEN", "AUTH_ERROR")
 
+# One vocabulary for every service's download state; the service's own word travels along as "raw_state".
+QUEUED, DOWNLOADING, PROCESSING, DONE, SEEDING, STALLED, EXPIRED, ERROR = (
+    "Queued", "Downloading", "Processing online", "Done", "Seeding", "Stalled", "Expired", "Error")
+RD_STATES = {"queued": QUEUED, "magnet_conversion": QUEUED, "waiting_files_selection": QUEUED, "downloading": DOWNLOADING,
+             "compressing": PROCESSING, "uploading": PROCESSING, "downloaded": DONE,
+             "error": ERROR, "magnet_error": ERROR, "virus": ERROR, "dead": ERROR}
+TB_STATES = {"metadl": QUEUED, "checkingresumedata": QUEUED, "downloading": DOWNLOADING, "completed": DONE, "cached": DONE,
+             "stopped seeding": DONE, "uploading": SEEDING, "stalled": STALLED, "paused": STALLED,
+             "expired": EXPIRED, "failed": ERROR}
+AD_STATES = {"in queue": QUEUED, "downloading": DOWNLOADING, "compressing / moving": PROCESSING, "uploading": PROCESSING,
+             "ready": DONE}
+
+
+def state_label(raw, table):
+    """The unified label for a service's state word. A parenthetical suffix ("uploading (no peers)") is ignored for
+    the lookup and kept in raw_state. Words no table knows are shown as sent (first letter upper-cased), so an
+    unexpected state never hides a row; a word mentioning an error or failure becomes "Error: <word>"."""
+    raw = str(raw or "").strip()
+    key = raw.lower().split(" (", 1)[0]
+    if key in table:
+        return table[key]
+    if "error" in key or "fail" in key:
+        return f"{ERROR}: {raw}"
+    return raw[:1].upper() + raw[1:]
+
 
 class ApiError(Exception):
     """User-facing error message from a service call."""
@@ -129,6 +154,7 @@ def _error_message(r):
 class RealDebrid(_Client):
     BASE = "https://api.real-debrid.com/rest/1.0"
     name = "Real-Debrid"
+    short = "RD"
 
     def _json(self, method, path, **kw):
         r = self._req(method, path, **kw)
@@ -137,7 +163,7 @@ class RealDebrid(_Client):
     def account(self):
         u = self._json("GET", "/user") or {}
         return {
-            "plan": u.get("type", "?"),
+            "plan": str(u.get("type") or "?").capitalize(),
             "expires": (u.get("expiration") or "")[:10],
             "extra": f"{u.get('points', 0)} points",
         }
@@ -156,12 +182,13 @@ class RealDebrid(_Client):
         for t in items:
             if t.get("id") is None:
                 continue
-            state = t.get("status", "")
-            if state == "waiting_files_selection":
+            raw = t.get("status", "")
+            state = state_label(raw, RD_STATES)
+            if raw == "waiting_files_selection":
                 try:
                     self._select_all(t["id"])
                 except ApiError as e:
-                    state = f"select failed: {e}"
+                    state = f"{ERROR}: select failed: {e}"
             out.append({
                 "id": str(t["id"]),
                 "name": t.get("filename", ""),
@@ -178,6 +205,7 @@ class RealDebrid(_Client):
                 "added": t.get("added") or "",
                 "finished": t.get("ended") or "",
                 "hash": t.get("hash") or "",
+                "raw_state": raw,
             })
         return out
 
@@ -218,6 +246,7 @@ class RealDebrid(_Client):
 class Torbox(_Client):
     BASE = "https://api.torbox.app/v1/api"
     name = "Torbox"
+    short = "TB"
     PLANS = {0: "Free", 1: "Essential", 2: "Pro", 3: "Standard"}
     def _call(self, method, path, **kw):
         """Full Torbox envelope after success checks."""
@@ -247,14 +276,15 @@ class Torbox(_Client):
             for t in self._json("GET", path, params={"bypass_cache": "true", "limit": 5000}) or []:
                 if t.get("id") is None:
                     continue
-                state = t.get("download_state") or ""
+                raw = t.get("download_state") or ""
+                label = state_label(raw, TB_STATES)
                 done = bool(t.get("download_finished")) and bool(t.get("download_present"))
                 moving = t.get("active") is not False  # Torbox keeps the last speeds on stopped / finished items
                 out.append({
                     "id": str(t["id"]),
                     "name": t.get("name", ""),
                     "progress": min(100.0, _num(t.get("progress"), float) * 100),  # API gives 0..1
-                    "state": state if kind == "torrent" else f"web: {state}",
+                    "state": label if kind == "torrent" else f"{label} (web)",
                     "done": done,
                     "size": _num(t.get("size")),
                     "seeds": _num(t.get("seeds")),
@@ -266,6 +296,7 @@ class Torbox(_Client):
                     "added": t.get("created_at") or "",
                     "finished": (t.get("updated_at") or "") if done else "",  # no finish timestamp in the API
                     "hash": t.get("hash") or "",
+                    "raw_state": raw,
                 })
         return out
 
@@ -346,6 +377,7 @@ def _flatten_files(nodes, prefix=""):
 class AllDebrid(_Client):
     BASE = "https://api.alldebrid.com"
     name = "AllDebrid"
+    short = "AD"
 
     def _call(self, method, path, **kw):
         """Envelope: {"status": "success", "data": ...} or {"status": "error", "error": {"code", "message"}}."""
@@ -367,7 +399,7 @@ class AllDebrid(_Client):
 
     def account(self):
         u = self._call("GET", "/v4/user").get("user") or {}
-        plan = "trial" if u.get("isTrial") else "premium" if u.get("isPremium") else "free"
+        plan = "Trial" if u.get("isTrial") else "Premium" if u.get("isPremium") else "Free"
         return {"plan": plan, "expires": _iso_from_ts(u.get("premiumUntil"))[:10],
                 "extra": f"{u.get('fidelityPoints', 0)} points"}
 
@@ -386,7 +418,7 @@ class AllDebrid(_Client):
                 "id": str(m["id"]),
                 "name": m.get("filename", ""),
                 "progress": min(100.0, progress),
-                "state": f"error: {status}" if code >= 5 else status,
+                "state": f"{ERROR}: {status}" if code >= 5 else state_label(status, AD_STATES),
                 "done": done,
                 "size": size,
                 "seeds": _num(m.get("seeders")),
@@ -398,6 +430,7 @@ class AllDebrid(_Client):
                 "added": _iso_from_ts(m.get("uploadDate")),
                 "finished": _iso_from_ts(m.get("completionDate")),
                 "hash": "",  # not part of the v4.1 status object
+                "raw_state": status,
             })
         return out
 

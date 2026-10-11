@@ -39,7 +39,8 @@ Keys stay on your machine in `~/.config/debrid-applet/config.json`, readable onl
   for more, including sending it to another service.
 - **Find things** with the filter box and the state and added-within dropdowns (last 7 days by default, change it
   in Settings); click column headers to sort.
-- The **All** tab shows every service together; the other tabs show one service each.
+- The **All** tab shows every service together (TB / RD / AD in its Service column; full names via Settings); the
+  other tabs show one service each.
 
 - **Updates** announce themselves: a notification offers to download, verify and install a new release (one password
   prompt), then restart. Or right-click the tray icon → Check for updates…
