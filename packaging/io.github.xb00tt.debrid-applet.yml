@@ -1,4 +1,4 @@
-app-id: io.github.xb00tt.debrid_applet
+app-id: io.github.xb00tt.debrid-applet
 runtime: org.freedesktop.Platform
 runtime-version: '26.08'
 sdk: org.freedesktop.Sdk
@@ -12,8 +12,6 @@ finish-args:
   - --talk-name=org.freedesktop.Notifications     # libnotify
   - --talk-name=org.freedesktop.Flatpak           # mpv/vlc/aria2c on the host; the app degrades without it
   - --filesystem=xdg-download                     # default download folder, watch folders inside it
-  - --filesystem=xdg-config/debrid-applet:create  # config.json, shared with a deb install
-  - --filesystem=xdg-data/debrid-applet:create    # activity and download logs
 cleanup:
   - /include
   - /lib/pkgconfig
@@ -35,10 +33,10 @@ modules:
     buildsystem: simple
     build-commands:
       - install -Dm644 -t /app/share/debrid-applet debrid_api.py debrid_local_api.py debrid_update.py debrid_applet.py debrid-applet.svg
-      - install -Dm644 debrid-applet.svg /app/share/icons/hicolor/scalable/apps/io.github.xb00tt.debrid_applet.svg
+      - install -Dm644 debrid-applet.svg /app/share/icons/hicolor/scalable/apps/io.github.xb00tt.debrid-applet.svg
       - mkdir -p /app/share/applications /app/share/metainfo /app/bin
-      - sed -e 's|@EXEC@|debrid-applet|' -e 's|^Icon=.*|Icon=io.github.xb00tt.debrid_applet|' debrid-applet.desktop > /app/share/applications/io.github.xb00tt.debrid_applet.desktop
-      - sed 's|debrid-applet.desktop|io.github.xb00tt.debrid_applet.desktop|' io.github.xb00tt.debrid_applet.metainfo.xml > /app/share/metainfo/io.github.xb00tt.debrid_applet.metainfo.xml
+      - sed -e 's|@EXEC@|debrid-applet|' -e 's|^Icon=.*|Icon=io.github.xb00tt.debrid-applet|' debrid-applet.desktop > /app/share/applications/io.github.xb00tt.debrid-applet.desktop
+      - sed 's|debrid-applet.desktop|io.github.xb00tt.debrid-applet.desktop|' io.github.xb00tt.debrid-applet.metainfo.xml > /app/share/metainfo/io.github.xb00tt.debrid-applet.metainfo.xml
       - printf '#!/bin/sh\nexec python3 /app/share/debrid-applet/debrid_applet.py "$@"\n' > /app/bin/debrid-applet
       - chmod 755 /app/bin/debrid-applet
     sources:

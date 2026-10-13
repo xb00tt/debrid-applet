@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.xb00tt.debrid_applet</id>
+  <id>io.github.xb00tt.debrid-applet</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <name>Debrid Applet</name>
@@ -25,7 +25,7 @@
     </screenshot>
   </screenshots>
   <releases>
-    <release version="1.1.2" date="2026-10-13"><description><p>App id is io.github.xb00tt.debrid_applet, the form Flathub maps to the repository; metainfo within Flathub's quality guidelines; install.sh never stops on store data.</p></description></release>
+    <release version="1.1.2" date="2026-10-13"><description><p>App id is io.github.xb00tt.debrid-applet, the form Flathub maps to the repository; metainfo within Flathub's quality guidelines; install.sh never stops on store data.</p></description></release>
     <release version="1.1.1" date="2026-10-13"><description><p>AppStream metainfo for app stores.</p></description></release>
     <release version="1.1.0" date="2026-10-13"><description><p>Runs on any Debian-based desktop: tray icon on Cinnamon, KDE, XFCE, MATE and GNOME, plain window elsewhere.</p></description></release>
     <release version="1.0.0" date="2026-10-11"><description><p>First release.</p></description></release>

@@ -1679,7 +1679,7 @@ def test_tray_adapter_policy():
             os.environ["DEBRID_APPLET_TRAY"] = saved[3]
 
 
-METAINFO = "io.github.xb00tt.debrid_applet.metainfo.xml"
+METAINFO = "io.github.xb00tt.debrid-applet.metainfo.xml"
 
 
 def test_metainfo():
@@ -1748,7 +1748,13 @@ def test_flatpak_helpers():
     assert da.host_which("mpv", in_flatpak=True, run=exploding) is None
     da._host_which_cache.clear()
     assert da.download_tool(True) == "aria2c" and da.download_tool(False) == "wget"
-    assert "flatpak run io.github.xb00tt.debrid_applet --toggle" in da.toggle_hint(True)
+    assert "flatpak run io.github.xb00tt.debrid-applet --toggle" in da.toggle_hint(True)
+    assert da.config_dir({}, False) == os.path.expanduser("~/.config/debrid-applet")
+    assert da.config_dir({"XDG_CONFIG_HOME": "/x/cfg"}, False) == os.path.expanduser("~/.config/debrid-applet")  # deb: unchanged
+    assert da.config_dir({"XDG_CONFIG_HOME": "/x/cfg"}, True) == "/x/cfg/debrid-applet"  # flatpak: ~/.var/app/<id>/config
+    assert da.config_dir({}, True) == os.path.expanduser("~/.config/debrid-applet")
+    assert da.data_dir({"XDG_DATA_HOME": "/x/data"}, True) == "/x/data/debrid-applet"
+    assert da.data_dir({"XDG_DATA_HOME": "/x/data"}, False) == os.path.expanduser("~/.local/share/debrid-applet")
     assert "debrid-applet --toggle" in da.toggle_hint(False) and "flatpak" not in da.toggle_hint(False)
 
 
@@ -1769,13 +1775,13 @@ def test_flatpak_degradation():
     assert da.browser_fallback(None, "", True) and not da.browser_fallback(None, "", False)
     assert not da.browser_fallback("mpv", "", True) and not da.browser_fallback(None, "stremio {url}", True)
     assert da.AUTOSTART_FALLBACK == ("Autostart is not available through your desktop's portal",
-                                     'Add "flatpak run io.github.xb00tt.debrid_applet" to your startup applications.')
+                                     'Add "flatpak run io.github.xb00tt.debrid-applet" to your startup applications.')
 
 
 def test_flatpak_manifest():
     import yaml
     import debrid_applet as da
-    m = yaml.safe_load(open("packaging/io.github.xb00tt.debrid_applet.yml"))
+    m = yaml.safe_load(open("packaging/io.github.xb00tt.debrid-applet.yml"))
     assert m["app-id"] == da.DBUS_ID and m["command"] == "debrid-applet"
     assert m["runtime"] == "org.freedesktop.Platform" and m["sdk"] == "org.freedesktop.Sdk"
     args = m["finish-args"]
@@ -1783,9 +1789,9 @@ def test_flatpak_manifest():
     assert not any(a.endswith(".*") for a in args), "wildcard talk-names are never granted"
     for a in ("--share=network", "--share=ipc", "--socket=wayland", "--socket=fallback-x11",
               "--talk-name=org.kde.StatusNotifierWatcher", "--talk-name=org.freedesktop.Notifications",
-              "--talk-name=org.freedesktop.Flatpak", "--filesystem=xdg-download",
-              "--filesystem=xdg-config/debrid-applet:create", "--filesystem=xdg-data/debrid-applet:create"):
+              "--talk-name=org.freedesktop.Flatpak", "--filesystem=xdg-download"):
         assert a in args, a
+    assert not any("xdg-config" in a or "xdg-data" in a for a in args), "the sandbox's own config and data dirs are used"
     assert "--socket=x11" not in args
     app = next(mod for mod in m["modules"] if isinstance(mod, dict) and mod["name"] == "debrid-applet")
     src = app["sources"][0]

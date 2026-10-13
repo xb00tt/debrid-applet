@@ -5,7 +5,7 @@ Base: debrid-applet 1.1.2. Target version: 1.2.0 (code learns a "flatpak" instal
 
 ## Goal
 
-Publish the applet on Flathub as `io.github.xb00tt.debrid_applet`, as light as the sandbox allows: freedesktop
+Publish the applet on Flathub as `io.github.xb00tt.debrid-applet`, as light as the sandbox allows: freedesktop
 runtime, one built Python module, no bundled players, narrow permissions. Every feature keeps working where the
 sandbox allows it; where it cannot, the applet degrades visibly (browser instead of mpv, built-in wget instead of
 host aria2c, a one-line instruction instead of autostart) and says so.
@@ -52,7 +52,7 @@ host aria2c, a one-line instruction instead of autostart) and says so.
 | Host programs | `flatpak-spawn --host` behind one helper; `--talk-name=org.freedesktop.Flatpak` with an exception request | players and aria2c are the app's purpose; bundling rejected |
 | Without host access | Play opens the stream in the browser (OpenURI portal); downloads use the runtime's `wget`; the custom play command reports it cannot run | the app stays useful while the exception is pending or on a locked-down install |
 | Files | `--filesystem=xdg-download`, `xdg-config/debrid-applet:create`, `xdg-data/debrid-applet:create`; no `home` | default download folder, the existing config path shared with the deb, logs; `home` would need an exception |
-| Watch folder | works inside Downloads; elsewhere the user adds `flatpak override --user --filesystem=<dir> io.github.xb00tt.debrid_applet` | one documented line instead of a blanket permission |
+| Watch folder | works inside Downloads; elsewhere the user adds `flatpak override --user --filesystem=<dir> io.github.xb00tt.debrid-applet` | one documented line instead of a blanket permission |
 | Config | stays `~/.config/debrid-applet/config.json` through the granted path | a user moving between deb and Flatpak keeps keys and layout |
 | Autostart | Background portal with `autostart` on first start; on refusal or no backend, one notification with the manual line | no `xdg-config/autostart` permission; Mint lacks the backend |
 | Updates | self-updater off in flatpak mode; Flathub updates | the updater cannot write `/app` and must not try |
@@ -64,11 +64,11 @@ Download size: runtime shared; app about 7 MB (PyGObject ~3, Ayatana stack ~2, r
 
 ## Manifest
 
-Kept in the repo at `packaging/io.github.xb00tt.debrid_applet.yml` for local builds and CI lint; the Flathub repo
+Kept in the repo at `packaging/io.github.xb00tt.debrid-applet.yml` for local builds and CI lint; the Flathub repo
 gets a copy with the `shared-modules` submodule.
 
 ```yaml
-app-id: io.github.xb00tt.debrid_applet
+app-id: io.github.xb00tt.debrid-applet
 runtime: org.freedesktop.Platform
 runtime-version: '26.08'
 sdk: org.freedesktop.Sdk
@@ -98,9 +98,9 @@ modules:
     buildsystem: simple
     build-commands:
       - install -Dm644 -t /app/share/debrid-applet debrid_api.py debrid_local_api.py debrid_update.py debrid_applet.py debrid-applet.svg
-      - install -Dm644 debrid-applet.svg /app/share/icons/hicolor/scalable/apps/io.github.xb00tt.debrid_applet.svg
-      - sed -e 's|@EXEC@|debrid-applet|' -e 's|^Icon=.*|Icon=io.github.xb00tt.debrid_applet|' debrid-applet.desktop > /app/share/applications/io.github.xb00tt.debrid_applet.desktop
-      - sed 's|debrid-applet.desktop|io.github.xb00tt.debrid_applet.desktop|' io.github.xb00tt.debrid_applet.metainfo.xml > /app/share/metainfo/io.github.xb00tt.debrid_applet.metainfo.xml
+      - install -Dm644 debrid-applet.svg /app/share/icons/hicolor/scalable/apps/io.github.xb00tt.debrid-applet.svg
+      - sed -e 's|@EXEC@|debrid-applet|' -e 's|^Icon=.*|Icon=io.github.xb00tt.debrid-applet|' debrid-applet.desktop > /app/share/applications/io.github.xb00tt.debrid-applet.desktop
+      - sed 's|debrid-applet.desktop|io.github.xb00tt.debrid-applet.desktop|' io.github.xb00tt.debrid-applet.metainfo.xml > /app/share/metainfo/io.github.xb00tt.debrid-applet.metainfo.xml
       - printf '#!/bin/sh\nexec python3 /app/share/debrid-applet/debrid_applet.py "$@"\n' > /app/bin/debrid-applet && chmod 755 /app/bin/debrid-applet
     sources:
       - type: archive
@@ -141,11 +141,11 @@ the same sources plus `-DENABLE_INTROSPECTION=ON` style options for that stack (
    watch folder, RSS and auto-download running after login", autostart: true, commandline: ["debrid-applet"]})` and
    reports the Response's `autostart` flag. Called once at the first start in flatpak mode (config key
    `autostart_asked`, default `False`, set after the call). On `False` or any error: one notification "Autostart is
-   not available through your desktop's portal. Add `flatpak run io.github.xb00tt.debrid_applet` to your startup
+   not available through your desktop's portal. Add `flatpak run io.github.xb00tt.debrid-applet` to your startup
    applications." and a log line. The deb's `/etc/xdg/autostart` entry is untouched.
-7. **Texts.** The tray-less hint names `flatpak run io.github.xb00tt.debrid_applet --toggle` in flatpak mode. Settings →
+7. **Texts.** The tray-less hint names `flatpak run io.github.xb00tt.debrid-applet --toggle` in flatpak mode. Settings →
    Automation shows under the watch folder, in flatpak mode: "Inside Downloads works as is; another folder needs
-   `flatpak override --user --filesystem=<folder> io.github.xb00tt.debrid_applet`."
+   `flatpak override --user --filesystem=<folder> io.github.xb00tt.debrid-applet`."
 8. **Drag and drop.** `.torrent` files dropped from outside the granted folders are unreadable in the sandbox; the
    existing "unreadable .torrent path" error already names the file. MANUAL explains; no code.
 
@@ -153,10 +153,10 @@ the same sources plus `-DENABLE_INTROSPECTION=ON` style options for that stack (
 
 ```
 flatpak install -y flathub org.flatpak.Builder
-flatpak run --command=flathub-build org.flatpak.Builder --install packaging/io.github.xb00tt.debrid_applet.yml
-flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest packaging/io.github.xb00tt.debrid_applet.yml
+flatpak run --command=flathub-build org.flatpak.Builder --install packaging/io.github.xb00tt.debrid-applet.yml
+flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest packaging/io.github.xb00tt.debrid-applet.yml
 flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo repo
-flatpak run io.github.xb00tt.debrid_applet
+flatpak run io.github.xb00tt.debrid-applet
 ```
 
 For a local build before the 1.2.0 tarball exists, the app module's source is `type: dir, path: ..` (plan detail;
@@ -175,8 +175,8 @@ the extension / natively; `Icon` resolves in the dock.
 
 1. Tag 1.2.0 (code changes above, manifest in `packaging/` with the real tarball sha256 filled in after the release
    workflow runs, so the manifest commit follows the release: "Release 1.2.0", then "Manifest: 1.2.0 sha256").
-2. Fork `flathub/flathub`, branch from `new-pr`, add `io.github.xb00tt.debrid_applet.yml`, the `shared-modules`
-   submodule and `python3-requirements.json`; open the PR "Add io.github.xb00tt.debrid_applet".
+2. Fork `flathub/flathub`, branch from `new-pr`, add `io.github.xb00tt.debrid-applet.yml`, the `shared-modules`
+   submodule and `python3-requirements.json`; open the PR "Add io.github.xb00tt.debrid-applet".
 3. Open the exception PR in `flathub/flatpak-builder-lint` for `finish-args-flatpak-spawn-access`: "launches the user's
    own media player (mpv, vlc, celluloid, smplayer, totem, or a custom command such as Stremio or Kodi) and
    downloader (aria2c) on the host; the app degrades to the browser and built-in wget without it; bundling players
@@ -187,7 +187,7 @@ the extension / natively; `Icon` resolves in the dock.
 
 ## Release process additions
 
-- `packaging/io.github.xb00tt.debrid_applet.yml`: tarball URL and sha256 per release, committed after the workflow
+- `packaging/io.github.xb00tt.debrid-applet.yml`: tarball URL and sha256 per release, committed after the workflow
   publishes the tarball. `tests.yml` lints the manifest (`flatpak-builder-lint` via `org.flatpak.Builder` is too heavy
   for CI; a YAML parse and a check that the URL version equals the previous `VERSION` or the current one is enough).
 - `python3-requirements.json`: regenerated when `requests` or `defusedxml` change.
@@ -229,3 +229,22 @@ Manual: the matrix above, here and in the VMs.
 Manifest about 45 lines, pip JSON generated, ~80 lines of Python (mode, icon name, two helpers, degradation branches,
 updater gating, autostart request, two texts), four or five offline tests, docs (README install section gains
 Flathub; MANUAL gains a Flatpak section; DEVELOPING gains the build/lint commands and the release addition).
+
+## Amendments 2026-10-13 (first local build and lint)
+
+- **App id** is `io.github.xb00tt.debrid-applet` (see the app-id spec's second amendment).
+- **Config is not shared with the deb.** The linter rejects `--filesystem=xdg-config/debrid-applet:create` and
+  `xdg-data/debrid-applet:create` (`finish-args-unnecessary-…-access`): a sandboxed app is expected to use its own
+  XDG dirs. In flatpak mode `CONFIG_DIR` and `DATA_DIR` follow `XDG_CONFIG_HOME` / `XDG_DATA_HOME`, which Flatpak
+  points at `~/.var/app/io.github.xb00tt.debrid-applet/config` and `/data`; the deb and source installs never follow
+  those variables, so nobody's existing config moves. A user switching from the deb copies
+  `~/.config/debrid-applet/config.json` into `~/.var/app/io.github.xb00tt.debrid-applet/config/debrid-applet/`.
+  `finish-args` keeps `xdg-download` only.
+- **Background portal on Mint works:** `xdg-desktop-portal-gtk` answered the request and wrote
+  `~/.config/autostart/io.github.xb00tt.debrid-applet.desktop` with `Exec=flatpak run --command=debrid-applet …`. The
+  fallback notice stays for desktops without a backend.
+- **App module source** is `type: git` with `tag:`; the linter warns `module-…-source-git-no-commit-with-tag`. The
+  in-repo manifest keeps tag only (a commit hash cannot precede the release commit it points at); the Flathub copy
+  adds `commit:` from the tag.
+- **Repo lint** reports `appstream-external-screenshot-url` / `appstream-screenshots-not-mirrored-in-ostree` on a local
+  build only: Flathub mirrors screenshots on its own builders.

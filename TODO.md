@@ -20,7 +20,7 @@ Roadmap (decided 2026-10-13, from the "full-fledged Linux app" discussion; goal 
    where a host answers, Ayatana elsewhere, tray-less mode as last resort), Quit in the window and `Ctrl+Q`, Wayland hint
    on the clipboard watcher, both tray libraries as Recommends. Next: implementation plan.
 2. **App id and AppStream metainfo** (v1.1.1): spec in `docs/superpowers/specs/2026-10-13-app-id-metainfo-design.md`.
-   `io.github.xb00tt.debrid_applet` (already the D-Bus id) becomes the AppStream id and metainfo file name; nothing
+   `io.github.xb00tt.debrid-applet` (already the D-Bus id) becomes the AppStream id and metainfo file name; nothing
    upstream is renamed (the self-updater's `FILES` and per-user autostart entries would break); the Flatpak renames
    the desktop file and icon at build time with `rename-desktop-file` / `rename-icon`. CI validates the metainfo and
    refuses a tag without a `<release>` entry.

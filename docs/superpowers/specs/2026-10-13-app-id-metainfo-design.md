@@ -177,3 +177,9 @@ changes.
 
 One XML file of about 40 lines, four one-line packaging and workflow edits, one offline test of about 25 lines, one
 assertion in the deb test, one comment, two doc paragraphs. No runtime change.
+
+**Second amendment 2026-10-13 (Flatpak step, linter run):** the id is `io.github.xb00tt.debrid-applet`. Flathub's
+linter tries the last component of a code-hosting id as-is (`appid-url-not-reachable: Tried
+https://github.com/xb00tt/debrid_applet`); the underscore-to-dash conversion in Flathub's example applies to the
+username component, not the repository. A dash is allowed in the last component, GLib accepts it as an application
+id, and appstreamcli is clean. Changed in 1.2.0 before any store listing existed.

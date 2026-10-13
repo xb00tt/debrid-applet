@@ -51,7 +51,7 @@ from debrid_update import deb_command, download, install_mode, install_user, lat
 
 VERSION = "1.1.2"
 APP_ID = "debrid-applet"  # WM_CLASS, icon name and .desktop basename all match
-DBUS_ID = "io.github.xb00tt.debrid_applet"  # the app id: D-Bus name (single instance), AppStream id, Flatpak id
+DBUS_ID = "io.github.xb00tt.debrid-applet"  # the app id: D-Bus name (single instance), AppStream id, Flatpak id
 IN_FLATPAK = install_mode(HERE) == "flatpak"
 FLATPAK_RUN = f"flatpak run {DBUS_ID}"
 
@@ -84,9 +84,23 @@ VIDEO_EXT = (".mkv", ".mp4", ".avi", ".m4v", ".webm", ".mov", ".ts", ".wmv", ".f
 GLib.set_prgname(APP_ID)
 
 # Both directories can be redirected (tests, harnesses, a second profile) so nothing but the real applet touches them.
-CONFIG_DIR = os.environ.get("DEBRID_APPLET_CONFIG_DIR") or os.path.expanduser("~/.config/debrid-applet")
+
+
+def config_dir(environ, in_flatpak):
+    """~/.config/debrid-applet, or inside the sandbox the app's own XDG config dir (~/.var/app/<id>/config/debrid-applet,
+    which Flatpak sets XDG_CONFIG_HOME to); a deb or source install never follows XDG_CONFIG_HOME, so nobody's config moves."""
+    base = environ.get("XDG_CONFIG_HOME") if in_flatpak else None
+    return os.path.join(base, "debrid-applet") if base else os.path.expanduser("~/.config/debrid-applet")
+
+
+def data_dir(environ, in_flatpak):
+    base = environ.get("XDG_DATA_HOME") if in_flatpak else None
+    return os.path.join(base, "debrid-applet") if base else os.path.expanduser("~/.local/share/debrid-applet")
+
+
+CONFIG_DIR = os.environ.get("DEBRID_APPLET_CONFIG_DIR") or config_dir(os.environ, IN_FLATPAK)
 CONFIG = os.path.join(CONFIG_DIR, "config.json")
-DATA_DIR = os.environ.get("DEBRID_APPLET_DATA_DIR") or os.path.expanduser("~/.local/share/debrid-applet")  # logs
+DATA_DIR = os.environ.get("DEBRID_APPLET_DATA_DIR") or data_dir(os.environ, IN_FLATPAK)  # logs
 LOG_FILE = os.path.join(DATA_DIR, "activity.log")
 LOG_MAX = 1_000_000  # default bytes; trimmed to the newest fifth when exceeded
 LOG_LEVELS = (("off", "Off"), ("errors", "Errors only"), ("actions", "Actions and notifications"),
@@ -2865,7 +2879,7 @@ class SettingsForm:
         test.set_halign(Gtk.Align.START)
         g.attach(test, 1, g._row, 1, 1)
         g._row += 1
-        result = self._note(g, "Keys stay on this machine in ~/.config/debrid-applet/config.json (mode 600).")
+        result = self._note(g, f"Keys stay on this machine in {CONFIG.replace(os.path.expanduser('~'), '~', 1)} (mode 600).")
         test.connect("clicked", lambda _b: self.test_keys(result))
 
     def _behaviour(self):
