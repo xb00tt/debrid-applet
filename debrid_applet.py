@@ -2741,6 +2741,8 @@ class SettingsForm:
         self._heading(g, "Convenience")
         self._combo(g, "start_tab", "Tab on start-up", [("All", "All")] + [(s, s) for s in SERVICES])
         self._check(g, "watch_clipboard", "Watch the clipboard for magnet links")
+        if is_wayland(type(Gdk.Display.get_default()).__name__):
+            self._note(g, "On Wayland the clipboard is only read while this window is focused.")
         self._check(g, "remember_filter", "Remember the state filter between runs")
         self._check(g, "service_full_names", "Full service names in the All tab (otherwise TB / RD / AD)")
         self._combo(g, "time_filter", "Show items added within", list(TIME_FILTERS))
