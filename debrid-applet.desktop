@@ -6,5 +6,6 @@ Exec=@EXEC@
 Icon=debrid-applet
 Terminal=false
 Categories=Network;
+Keywords=debrid;torrent;magnet;torbox;real-debrid;alldebrid;
 StartupWMClass=debrid-applet
 X-GNOME-Autostart-enabled=true

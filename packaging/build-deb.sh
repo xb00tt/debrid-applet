@@ -40,15 +40,16 @@ Version: $VERSION
 Section: net
 Priority: optional
 Architecture: all
-Depends: python3 (>= 3.11), python3-gi, gir1.2-gtk-3.0, gir1.2-xapp-1.0, gir1.2-notify-0.7, python3-requests, python3-defusedxml
-Recommends: mpv | vlc | celluloid, aria2
+Depends: python3 (>= 3.11), python3-gi, gir1.2-gtk-3.0, gir1.2-notify-0.7, python3-requests, python3-defusedxml
+Recommends: gir1.2-ayatanaappindicator3-0.1, gir1.2-xapp-1.0, mpv | vlc | celluloid, aria2
 Maintainer: xb00tt <borislav.bg@gmail.com>
 Homepage: https://github.com/xb00tt/debrid-applet
 Description: Tray control panel for Torbox, Real-Debrid and AllDebrid
  Shows account status and every torrent with live progress, adds magnets,
  .torrent files and hoster links, streams or downloads the results, and
  automates the rest: watch folder, RSS feeds, auto-download, local API.
- Built for Linux Mint Cinnamon (XApp status icon).
+ Tray icon on Cinnamon, KDE, XFCE, MATE and GNOME (with the AppIndicator
+ extension); works as a plain window elsewhere.
 CONTROL
 find "$STAGE" -type d -exec chmod 755 {} +
 find "$STAGE/usr" -type f ! -path "*/bin/*" -exec chmod 644 {} +
