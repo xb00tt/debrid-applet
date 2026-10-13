@@ -137,6 +137,24 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
   newest last, with Refresh / Open file / Clear. Kept in `~/.local/share/debrid-applet/activity.log`. Settings choose
   the level (Off / Errors only / Actions and notifications / Verbose with every poll) and the size cap (default 1000 KB).
 
+## Flatpak
+
+The Flatpak build (`io.github.xb00tt.debrid-applet`) behaves like the deb with these differences:
+
+- Config and logs live in the sandbox: `~/.var/app/io.github.xb00tt.debrid-applet/config/debrid-applet/config.json` and
+  `~/.var/app/io.github.xb00tt.debrid-applet/data/debrid-applet/`. To carry keys over from a deb or source install, copy
+  `~/.config/debrid-applet/config.json` there.
+- The tray is a StatusNotifier indicator: any click opens the menu, middle-click toggles the window.
+- Players and `aria2c` run on the host through `flatpak-spawn`. If that is not permitted (`flatpak override --user
+  --talk-name=org.freedesktop.Flatpak io.github.xb00tt.debrid-applet` grants it), Play opens the stream in the browser and downloads use the
+  sandbox's `wget`.
+- The default download folder is Downloads; a watch folder elsewhere needs `flatpak override --user --filesystem=<folder>
+  io.github.xb00tt.debrid-applet`. Dropping `.torrent` files from other folders fails inside the sandbox; use the folder button.
+- Autostart is requested once through the Background portal (it writes a startup entry for you). Where the desktop has
+  no such portal, add `flatpak run io.github.xb00tt.debrid-applet` to your startup applications.
+- Updates come from Flathub; the self-updater and its Settings entry are hidden.
+- Command line: `flatpak run io.github.xb00tt.debrid-applet --toggle` (also for a global hotkey).
+
 ## Settings
 
 Right-click the tray icon → **Settings…**, or the gear in the toolbar. Four pages:

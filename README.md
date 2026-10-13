@@ -19,6 +19,12 @@ It starts with your session from now on. To start it right away, look for **Debr
 Works on any Debian-based desktop: the tray icon shows on Cinnamon, KDE, XFCE and MATE, and on GNOME with the
 "AppIndicator and KStatusNotifierItem Support" extension; without a tray the window simply opens at start.
 
+Flatpak (any distro): once published, `flatpak install flathub io.github.xb00tt.debrid-applet`. The deb is the better choice on Mint: the
+Flatpak's tray icon has no left-click toggle there. Inside the Flatpak, players and aria2c run on the host; until
+Flathub grants that permission, Play opens the stream in your browser and downloads use the built-in wget. The
+Flatpak keeps its own config: to carry keys over from the deb, copy `~/.config/debrid-applet/config.json` to
+`~/.var/app/io.github.xb00tt.debrid-applet/config/debrid-applet/`.
+
 Prefer running from source? Clone the repo and run `./install.sh` (`sudo apt install python3-requests python3-defusedxml` first).
 On Fedora: `sudo dnf install python3-gobject gtk3 libnotify python3-requests python3-defusedxml`; on Arch:
 `sudo pacman -S python-gobject gtk3 libnotify python-requests python-defusedxml`; then `./install.sh` from the release tarball.

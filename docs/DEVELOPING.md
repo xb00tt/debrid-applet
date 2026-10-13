@@ -22,6 +22,8 @@ mangles `[` and `|` on some keyboard layouts, so use the clipboard or bracket-fr
   forces a backend for testing: Cinnamon's xapp-sn-watcher shows the Ayatana path on one box).
 - `test_debrid_api.py`: the offline suite; run it directly, no test runner needed.
 - `install.sh`, `debrid-applet.desktop`, `debrid-applet.svg`: per-user install.
+- `packaging/io.github.xb00tt.debrid-applet.yml`, `packaging/python3-requirements.json`, `packaging/shared-modules/`: the Flatpak
+  manifest, its vendored Python wheels and Flathub's shared modules (git submodule).
 - `io.github.xb00tt.debrid-applet.metainfo.xml`: AppStream metainfo for app stores and Flathub; installed to
   `/usr/share/metainfo` by the package and `~/.local/share/metainfo` by `install.sh`. The id is `DBUS_ID`; the desktop
   file and icon keep the `debrid-applet` name (a Flatpak renames them at build time).
@@ -41,11 +43,33 @@ mangles `[` and `|` on some keyboard layouts, so use the clipboard or bracket-fr
   `postinst` compiles the bytecode into `__pycache__` (the launcher imports the module rather than running the file, so
   starts skip the compile) and `prerm` removes it.
 
+## Flatpak
+
+Build and run locally without root (the SDK is about 1 GB the first time; the builder is itself a Flatpak and cannot
+see `/tmp`, so build in a directory under your home):
+
+    flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+    flatpak install --user -y flathub org.flatpak.Builder org.freedesktop.Platform//26.08 org.freedesktop.Sdk//26.08
+    git submodule update --init
+    flatpak run org.flatpak.Builder --user --install --force-clean --repo=$HOME/fp/repo $HOME/fp/build packaging/io.github.xb00tt.debrid-applet.yml
+    flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest packaging/io.github.xb00tt.debrid-applet.yml
+    flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo $HOME/fp/repo
+    flatpak run io.github.xb00tt.debrid-applet
+
+The manifest's app module points at the release tag; for an unreleased tree replace its `sources` with
+`- type: dir` / `path: /path/to/checkout` (plus `skip: [.git]`). `DEBRID_APPLET_TRAY` and the other env knobs pass
+through `flatpak run --env=NAME=value`. The linter's `finish-args-flatpak-spawn-access` finding is expected: Flathub
+grants it on request (see the spec); the `source-git-no-commit-with-tag` warning is answered in the Flathub copy of the
+manifest by adding `commit:` next to `tag:`. Regenerate `python3-requirements.json` with
+`flatpak-pip-generator --output packaging/python3-requirements requests defusedxml` when those packages change.
+Inside the sandbox `install_mode()` returns `"flatpak"`: the updater is off, config and logs sit under
+`~/.var/app/io.github.xb00tt.debrid-applet/`, and host programs go through `host_cmd()` / `host_which()`.
+
 ## Releases
 
 To release: bump `VERSION` in `debrid_applet.py` and the deb file name in the README, add a `<release>` entry (newest
 first, the tag's date, one line) to `io.github.xb00tt.debrid-applet.metainfo.xml` and point its screenshot URL at the
-new tag, then tag `vX.Y.Z` and push the tag. `python3 test_debrid_api.py` checks the file against `VERSION`;
+new tag, move the `tag:` in `packaging/io.github.xb00tt.debrid-applet.yml` to the new version (the test checks it), then tag `vX.Y.Z` and push the tag. `python3 test_debrid_api.py` checks the file against `VERSION`;
 `appstreamcli validate --no-net --pedantic io.github.xb00tt.debrid-applet.metainfo.xml` is the local lint. The release
 workflow runs the tests (so a metainfo whose newest release is not `VERSION` fails there), refuses a tag that doesn't
 match `VERSION`, builds the `.deb` (via

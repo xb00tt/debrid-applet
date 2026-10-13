@@ -24,16 +24,11 @@ Roadmap (decided 2026-10-13, from the "full-fledged Linux app" discussion; goal 
    upstream is renamed (the self-updater's `FILES` and per-user autostart entries would break); the Flatpak renames
    the desktop file and icon at build time with `rename-desktop-file` / `rename-icon`. CI validates the metainfo and
    refuses a tag without a `<release>` entry.
-3. **Flatpak on Flathub** (v1.2.0): spec in `docs/superpowers/specs/2026-10-13-flatpak-design.md`. Freedesktop runtime (670 MB, yearly branches; ships GTK3, libnotify, typelibs and Python but
-   not `gi`), PyGObject built in the manifest with pycairo disabled (the code never touches cairo), requests and
-   defusedxml vendored. Host commands via `flatpak-spawn --host` for players, aria2c, wget and xdg-open (one helper,
-   four call sites, plus a host `which` for `find_player()` and the aria2c check); `--filesystem=home`; autostart via the
-   Background portal; self-updater off (`install_mode()` learns "flatpak" from `/.flatpak-info`). Tray is Ayatana only
-   inside the sandbox, so Cinnamon loses the left-click toggle in the Flatpak build; the deb keeps it. Rejected: GNOME
-   runtime (1.1 GB, six-monthly branches, this box carries three of them) and bundling mpv/aria2 (100+ MB, kills the
-   custom play command). Manifest keys: `rename-desktop-file: debrid-applet.desktop`, `rename-icon: debrid-applet`;
-   the metainfo is already named by id and within Flathub's quality guidelines (summary length, screenshot size are
-   asserted by `test_metainfo`).
+3. **Flatpak on Flathub** (v1.2.0): built and verified locally, spec in `docs/superpowers/specs/2026-10-13-flatpak-design.md`.
+   Pending (maintainer): the Flathub PR (`flathub/flathub`, branch `new-pr`, manifest `packaging/io.github.xb00tt.debrid-applet.yml` with
+   `commit:` added next to `tag:`, plus `python3-requirements.json` and the `shared-modules` submodule) and the
+   `finish-args-flatpak-spawn-access` exception PR in `flathub/flatpak-builder-lint` (text in the spec). Until the
+   exception lands, the Flatpak plays in the browser and downloads with the built-in wget.
 4. **Tarball for other distros**: already works via `install.sh`; add one dependency line per distro (Fedora, Arch,
    openSUSE) to the README. RPM spec / AUR PKGBUILD only if someone asks; Flatpak covers those distros.
 5. **Daemon + frontend split**: deferred, no user has asked and Flatpak cannot ship a systemd user unit anyway. If it
