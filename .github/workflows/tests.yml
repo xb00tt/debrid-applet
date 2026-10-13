@@ -14,6 +14,10 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q python3-gi gir1.2-gtk-3.0 gir1.2-notify-0.7 gir1.2-xapp-1.0 python3-requests python3-defusedxml
+          sudo apt-get install -y -q python3-gi gir1.2-gtk-3.0 gir1.2-notify-0.7 gir1.2-xapp-1.0 python3-requests python3-defusedxml appstream desktop-file-utils
+      - name: Validate the AppStream metainfo and the desktop file
+        run: |
+          appstreamcli validate --no-net io.github.xb00tt.DebridApplet.metainfo.xml
+          desktop-file-validate debrid-applet.desktop
       - name: Run the offline test suite
         run: python3 test_debrid_api.py
