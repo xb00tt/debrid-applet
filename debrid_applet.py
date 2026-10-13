@@ -49,7 +49,7 @@ from debrid_api import (DONE, DOWNLOADING, ERROR, EXPIRED, INVALID_KEY, PROCESSI
 from debrid_local_api import LocalApi  # noqa: E402
 from debrid_update import deb_command, download, install_mode, install_user, latest_release, verify_signature  # noqa: E402
 
-VERSION = "1.1.2"
+VERSION = "1.2.0"
 APP_ID = "debrid-applet"  # WM_CLASS, icon name and .desktop basename all match
 DBUS_ID = "io.github.xb00tt.debrid-applet"  # the app id: D-Bus name (single instance), AppStream id, Flatpak id
 IN_FLATPAK = install_mode(HERE) == "flatpak"
