@@ -11,6 +11,13 @@ its name.
 
 ## Decision: nothing upstream is renamed
 
+**Amendment 2026-10-13 (after the branch review):** the id is `io.github.xb00tt.debrid_applet`, not
+`io.github.xb00tt.DebridApplet`. Flathub derives the repository URL from the last component of a code-hosting id,
+converting underscores to dashes (its example: `io.github.example_foo.bar` → `github.com/example-foo/bar`), and the
+URL must resolve; `DebridApplet` would have needed a manual exception. The D-Bus name, the metainfo id and file name
+and the future Flatpak id all follow. Changed in 1.1.2 before any store listing existed, so no `<provides><id>`
+compatibility entry is needed.
+
 Two ways to get there were weighed.
 
 **A. Keep `debrid-applet` as the file and WM_CLASS name; publish the reverse-DNS id in the metainfo only.** The Flatpak
@@ -19,7 +26,7 @@ step renames the desktop file and icon at build time with the manifest keys `ren
 rewrites the metainfo `<launchable>` (docs.flathub.org, metainfo guidelines, "Launchable"; docs.flatpak.org,
 manifests, "File renaming"). Chosen.
 
-**B. Rename the desktop file, icon and prgname to `io.github.xb00tt.DebridApplet` in the repo.** Rejected:
+**B. Rename the desktop file, icon and prgname to `io.github.xb00tt.debrid_applet` in the repo.** Rejected:
 
 - `debrid_update.FILES` names `debrid-applet.svg`; the self-updater in every 1.1.0 source install would refuse the
   next tarball with "Release tarball lacks debrid-applet.svg". A rename needs a two-release migration for no gain.
@@ -30,19 +37,19 @@ manifests, "File renaming"). Chosen.
 Consequences of A:
 
 - `APP_ID = "debrid-applet"` stays the prgname, WM_CLASS, icon name and desktop basename.
-- `DBUS_ID = "io.github.xb00tt.DebridApplet"` becomes the one public id: `Gtk.Application` (already), the metainfo
+- `DBUS_ID = "io.github.xb00tt.debrid_applet"` becomes the one public id: `Gtk.Application` (already), the metainfo
   `<id>` and file name, and later the Flatpak manifest `id`. Its comment in `debrid_applet.py:54` says so.
 - AppStream allows a launchable that differs from the id; `debrid-applet.desktop` is what the deb installs, so the
   metainfo names it. On GNOME and Cinnamon the deb's window matches its desktop file by WM_CLASS as today.
 
 ## Files
 
-### 1. `io.github.xb00tt.DebridApplet.metainfo.xml` (repo root, new)
+### 1. `io.github.xb00tt.debrid_applet.metainfo.xml` (repo root, new)
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.xb00tt.DebridApplet</id>
+  <id>io.github.xb00tt.debrid_applet</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <name>Debrid Applet</name>
@@ -96,7 +103,7 @@ shows. That makes the file part of every release bump (see "Release process").
 - `.github/workflows/tests.yml`: add `appstream desktop-file-utils` to the apt line and one step:
 
   ```
-  appstreamcli validate --no-net io.github.xb00tt.DebridApplet.metainfo.xml && desktop-file-validate debrid-applet.desktop
+  appstreamcli validate --no-net io.github.xb00tt.debrid_applet.metainfo.xml && desktop-file-validate debrid-applet.desktop
   ```
 
   Flathub treats validator warnings as fatal, so the step fails on any output. `--pedantic` is for the developer's
@@ -105,7 +112,7 @@ shows. That makes the file part of every release bump (see "Release process").
   entry in the metainfo:
 
   ```
-  grep -q "<release version=\"$V\"" io.github.xb00tt.DebridApplet.metainfo.xml || { echo "metainfo lacks release $V"; exit 1; }
+  grep -q "<release version=\"$V\"" io.github.xb00tt.debrid_applet.metainfo.xml || { echo "metainfo lacks release $V"; exit 1; }
   ```
 
 ### 4. Offline test (`test_debrid_api.py`, new `test_metainfo`)
@@ -118,7 +125,7 @@ Parses the file with `xml.etree` (no network, no GTK) and asserts:
 - the first `<release>` is `debrid_applet.VERSION`, no release date is after today, versions are listed newest first;
 - the screenshot `<image>` is https and contains `/v{VERSION}/`.
 
-The existing deb-layout test gains one assertion: `usr/share/metainfo/io.github.xb00tt.DebridApplet.metainfo.xml` is
+The existing deb-layout test gains one assertion: `usr/share/metainfo/io.github.xb00tt.debrid_applet.metainfo.xml` is
 in the built package.
 
 ### 5. Code
@@ -140,7 +147,7 @@ changes.
 
 ## Notes for the Flatpak step (next spec)
 
-- Manifest `id: io.github.xb00tt.DebridApplet`, `rename-desktop-file: debrid-applet.desktop`,
+- Manifest `id: io.github.xb00tt.debrid_applet`, `rename-desktop-file: debrid-applet.desktop`,
   `rename-icon: debrid-applet`, `rename-appdata-file` not needed (the metainfo is already named by id).
 - The Flathub linter wants the installed desktop file's `Icon=` to equal the app id; verify that `rename-icon`
   rewrites the key (the Haiku lookup found no statement either way), else the manifest edits it with `sed`.
@@ -157,11 +164,11 @@ changes.
 ## Testing
 
 - `python3 test_debrid_api.py` → `test_metainfo` and the deb-layout assertion pass.
-- `appstreamcli validate --no-net --pedantic io.github.xb00tt.DebridApplet.metainfo.xml` → exit 0, no output
+- `appstreamcli validate --no-net --pedantic io.github.xb00tt.debrid_applet.metainfo.xml` → exit 0, no output
   (appstreamcli 1.0.2 is installed here).
 - `desktop-file-validate debrid-applet.desktop` → no output.
 - Build the deb, `dpkg-deb -c` lists the metainfo under `usr/share/metainfo/`.
-- After installing: `appstreamcli get io.github.xb00tt.DebridApplet` prints the component from the system pool.
+- After installing: `appstreamcli get io.github.xb00tt.debrid_applet` prints the component from the system pool.
 
 ## Size of the change
 

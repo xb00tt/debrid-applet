@@ -11,7 +11,7 @@ META="$HOME/.local/share/metainfo"
 mkdir -p "$ICONS" "$META"
 cp "$SRC/debrid_api.py" "$SRC/debrid_local_api.py" "$SRC/debrid_update.py" "$SRC/debrid_applet.py" "$SRC/debrid-applet.svg" "$DIR/"
 cp "$SRC/debrid-applet.svg" "$ICONS/debrid-applet.svg"
-cp "$SRC/io.github.xb00tt.DebridApplet.metainfo.xml" "$META/"
+cp "$SRC/io.github.xb00tt.debrid_applet.metainfo.xml" "$META/"
 gtk-update-icon-cache -q "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
 sed "s|@EXEC@|python3 $DIR/debrid_applet.py|" "$SRC/debrid-applet.desktop" > "$APPS/debrid-applet.desktop"
 cp "$APPS/debrid-applet.desktop" "$AUTO/debrid-applet.desktop"

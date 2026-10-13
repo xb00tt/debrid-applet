@@ -1678,7 +1678,7 @@ def test_tray_adapter_policy():
             os.environ["DEBRID_APPLET_TRAY"] = saved[3]
 
 
-METAINFO = "io.github.xb00tt.DebridApplet.metainfo.xml"
+METAINFO = "io.github.xb00tt.debrid_applet.metainfo.xml"
 
 
 def test_metainfo():

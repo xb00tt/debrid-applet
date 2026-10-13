@@ -51,7 +51,7 @@ from debrid_update import deb_command, download, install_mode, install_user, lat
 
 VERSION = "1.1.1"
 APP_ID = "debrid-applet"  # WM_CLASS, icon name and .desktop basename all match
-DBUS_ID = "io.github.xb00tt.DebridApplet"  # the app id: D-Bus name (single instance), AppStream id, Flatpak id
+DBUS_ID = "io.github.xb00tt.debrid_applet"  # the app id: D-Bus name (single instance), AppStream id, Flatpak id
 HOMEPAGE = "https://github.com/xb00tt/debrid-applet"
 PLAYERS = ("mpv", "vlc", "celluloid", "smplayer", "totem")
 SUB_FLAG = {"mpv": "--sub-file={}", "celluloid": "--mpv-sub-file={}", "smplayer": "-sub {}", "vlc": "--sub-file={}"}

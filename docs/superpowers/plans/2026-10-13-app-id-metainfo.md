@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship an AppStream metainfo file under the reverse-DNS id `io.github.xb00tt.DebridApplet`, installed by the deb and `install.sh`, validated in CI, and tied to every release, without renaming anything upstream.
+**Goal:** Ship an AppStream metainfo file under the reverse-DNS id `io.github.xb00tt.debrid_applet`, installed by the deb and `install.sh`, validated in CI, and tied to every release, without renaming anything upstream.
 
 **Architecture:** One static XML file at the repo root, copied into `/usr/share/metainfo` by `packaging/build-deb.sh` and into `~/.local/share/metainfo` by `install.sh`. An offline test keeps the file consistent with `VERSION`, the desktop file and the icon. CI runs `appstreamcli validate` and `desktop-file-validate`; the release workflow refuses a tag whose version has no `<release>` entry. `APP_ID` stays `debrid-applet`; `DBUS_ID` is the public id.
 
@@ -15,7 +15,7 @@
 ## Global Constraints
 
 - No file, constant or WM_CLASS is renamed: `APP_ID = "debrid-applet"`, `debrid-applet.desktop`, `debrid-applet.svg` stay. The spec rejects the upstream rename.
-- Public id, exact: `io.github.xb00tt.DebridApplet`, equal to `debrid_applet.DBUS_ID`; metainfo file name, exact: `io.github.xb00tt.DebridApplet.metainfo.xml` at the repo root.
+- Public id, exact: `io.github.xb00tt.debrid_applet`, equal to `debrid_applet.DBUS_ID`; metainfo file name, exact: `io.github.xb00tt.debrid_applet.metainfo.xml` at the repo root.
 - Metainfo `<launchable type="desktop-id">` is `debrid-applet.desktop`.
 - `<releases>` newest first, no future dates, first entry equals `VERSION`; screenshot `<image>` is `https://raw.githubusercontent.com/xb00tt/debrid-applet/v<VERSION>/docs/screenshot.png`.
 - `VERSION` becomes `1.1.1` only in the last task; until then the metainfo's first release is `1.1.0` so the test stays green at every commit.
@@ -37,19 +37,19 @@
 ### Task 1: The metainfo file and its test
 
 **Files:**
-- Create: `io.github.xb00tt.DebridApplet.metainfo.xml`
+- Create: `io.github.xb00tt.debrid_applet.metainfo.xml`
 - Test: `test_debrid_api.py` (append `test_metainfo` before `if __name__ == "__main__":`)
 
 **Interfaces:**
 - Consumes: `debrid_applet.VERSION`, `debrid_applet.APP_ID`, `debrid_applet.DBUS_ID`, repo files `debrid-applet.desktop`, `debrid-applet.svg`.
-- Produces: the metainfo file; `METAINFO = "io.github.xb00tt.DebridApplet.metainfo.xml"` module constant in the test file, reused by Task 2's deb assertion.
+- Produces: the metainfo file; `METAINFO = "io.github.xb00tt.debrid_applet.metainfo.xml"` module constant in the test file, reused by Task 2's deb assertion.
 
 - [ ] **Step 1: Write the failing test**
 
 Append to `test_debrid_api.py` before the `if __name__ == "__main__":` block:
 
 ```python
-METAINFO = "io.github.xb00tt.DebridApplet.metainfo.xml"
+METAINFO = "io.github.xb00tt.debrid_applet.metainfo.xml"
 
 
 def test_metainfo():
@@ -84,16 +84,16 @@ def test_metainfo():
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `python3 test_debrid_api.py`
-Expected: `FileNotFoundError: [Errno 2] No such file or directory: 'io.github.xb00tt.DebridApplet.metainfo.xml'` from `test_metainfo` (earlier tests print `ok`).
+Expected: `FileNotFoundError: [Errno 2] No such file or directory: 'io.github.xb00tt.debrid_applet.metainfo.xml'` from `test_metainfo` (earlier tests print `ok`).
 
 - [ ] **Step 3: Write the metainfo file**
 
-Create `io.github.xb00tt.DebridApplet.metainfo.xml` with exactly this content (first release is the current `VERSION`, 1.1.0; Task 5 adds 1.1.1):
+Create `io.github.xb00tt.debrid_applet.metainfo.xml` with exactly this content (first release is the current `VERSION`, 1.1.0; Task 5 adds 1.1.1):
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.xb00tt.DebridApplet</id>
+  <id>io.github.xb00tt.debrid_applet</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <name>Debrid Applet</name>
@@ -131,7 +131,7 @@ Expected: every line `ok …`, last line `87 passed`.
 
 - [ ] **Step 5: Validate with the real tools**
 
-Run: `appstreamcli validate --no-net --pedantic io.github.xb00tt.DebridApplet.metainfo.xml; echo "exit=$?"`
+Run: `appstreamcli validate --no-net --pedantic io.github.xb00tt.debrid_applet.metainfo.xml; echo "exit=$?"`
 Expected: `exit=0`. If the tool prints a `W` or `P` line, fix the file until it prints nothing; a `developer_name` suggestion means the installed appstreamcli predates 1.0, which this box does not (1.0.2).
 
 Run: `desktop-file-validate debrid-applet.desktop; echo "exit=$?"`
@@ -140,8 +140,8 @@ Expected: `exit=0`, no output.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add io.github.xb00tt.DebridApplet.metainfo.xml test_debrid_api.py
-git commit -m "AppStream metainfo under io.github.xb00tt.DebridApplet, with an offline consistency test"
+git add io.github.xb00tt.debrid_applet.metainfo.xml test_debrid_api.py
+git commit -m "AppStream metainfo under io.github.xb00tt.debrid_applet, with an offline consistency test"
 ```
 
 ---
@@ -154,7 +154,7 @@ git commit -m "AppStream metainfo under io.github.xb00tt.DebridApplet, with an o
 
 **Interfaces:**
 - Consumes: `METAINFO` from Task 1's test section.
-- Produces: `usr/share/metainfo/io.github.xb00tt.DebridApplet.metainfo.xml` inside the deb; `~/.local/share/metainfo/` copy from `install.sh`.
+- Produces: `usr/share/metainfo/io.github.xb00tt.debrid_applet.metainfo.xml` inside the deb; `~/.local/share/metainfo/` copy from `install.sh`.
 
 - [ ] **Step 1: Write the failing assertion**
 
@@ -187,13 +187,13 @@ mkdir -p "$APP" "$STAGE/usr/bin" "$STAGE/usr/share/applications" "$STAGE/etc/xdg
 and after the `cp "$SRC/debrid-applet.svg" "$STAGE/usr/share/icons/hicolor/scalable/apps/"` line add:
 
 ```sh
-cp "$SRC/io.github.xb00tt.DebridApplet.metainfo.xml" "$STAGE/usr/share/metainfo/"
+cp "$SRC/io.github.xb00tt.debrid_applet.metainfo.xml" "$STAGE/usr/share/metainfo/"
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `python3 test_debrid_api.py`
-Expected: `87 passed`. Then `dpkg-deb -c dist/debrid-applet_1.1.0_all.deb | grep metainfo` prints one line ending in `usr/share/metainfo/io.github.xb00tt.DebridApplet.metainfo.xml`.
+Expected: `87 passed`. Then `dpkg-deb -c dist/debrid-applet_1.1.0_all.deb | grep metainfo` prints one line ending in `usr/share/metainfo/io.github.xb00tt.debrid_applet.metainfo.xml`.
 
 - [ ] **Step 5: Per-user install**
 
@@ -205,13 +205,13 @@ META="$HOME/.local/share/metainfo"
 mkdir -p "$ICONS" "$META"
 cp "$SRC/debrid_api.py" "$SRC/debrid_local_api.py" "$SRC/debrid_update.py" "$SRC/debrid_applet.py" "$SRC/debrid-applet.svg" "$DIR/"
 cp "$SRC/debrid-applet.svg" "$ICONS/debrid-applet.svg"
-cp "$SRC/io.github.xb00tt.DebridApplet.metainfo.xml" "$META/"
+cp "$SRC/io.github.xb00tt.debrid_applet.metainfo.xml" "$META/"
 ```
 
 Check against a throwaway home, never the real one:
 
 Run: `H=$(mktemp -d) && HOME="$H" sh install.sh >/dev/null && ls "$H/.local/share/metainfo" && rm -rf "$H"`
-Expected: `io.github.xb00tt.DebridApplet.metainfo.xml`.
+Expected: `io.github.xb00tt.debrid_applet.metainfo.xml`.
 
 - [ ] **Step 6: Commit**
 
@@ -242,7 +242,7 @@ Replace the two steps:
           sudo apt-get install -y -q python3-gi gir1.2-gtk-3.0 gir1.2-notify-0.7 gir1.2-xapp-1.0 python3-requests python3-defusedxml appstream desktop-file-utils
       - name: Validate the AppStream metainfo and the desktop file
         run: |
-          appstreamcli validate --no-net io.github.xb00tt.DebridApplet.metainfo.xml
+          appstreamcli validate --no-net io.github.xb00tt.debrid_applet.metainfo.xml
           desktop-file-validate debrid-applet.desktop
       - name: Run the offline test suite
         run: python3 test_debrid_api.py
@@ -257,16 +257,16 @@ Replace the "Check the tag matches VERSION" step with:
         run: |
           V=$(python3 -c "import re;print(re.search(r'VERSION = \"([^\"]+)\"', open('debrid_applet.py').read()).group(1))")
           test "v$V" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != VERSION $V"; exit 1; }
-          grep -q "<release version=\"$V\"" io.github.xb00tt.DebridApplet.metainfo.xml || { echo "metainfo lacks release $V"; exit 1; }
+          grep -q "<release version=\"$V\"" io.github.xb00tt.debrid_applet.metainfo.xml || { echo "metainfo lacks release $V"; exit 1; }
 ```
 
 - [ ] **Step 3: Run the exact commands locally**
 
 Run:
 ```bash
-appstreamcli validate --no-net io.github.xb00tt.DebridApplet.metainfo.xml && desktop-file-validate debrid-applet.desktop && echo "validators ok"
-V=1.1.0; grep -q "<release version=\"$V\"" io.github.xb00tt.DebridApplet.metainfo.xml && echo "gate passes for $V"
-V=1.1.10; grep -q "<release version=\"$V\"" io.github.xb00tt.DebridApplet.metainfo.xml || echo "gate refuses $V"
+appstreamcli validate --no-net io.github.xb00tt.debrid_applet.metainfo.xml && desktop-file-validate debrid-applet.desktop && echo "validators ok"
+V=1.1.0; grep -q "<release version=\"$V\"" io.github.xb00tt.debrid_applet.metainfo.xml && echo "gate passes for $V"
+V=1.1.10; grep -q "<release version=\"$V\"" io.github.xb00tt.debrid_applet.metainfo.xml || echo "gate refuses $V"
 python3 -c "import yaml,sys; [yaml.safe_load(open(f)) for f in ('.github/workflows/tests.yml','.github/workflows/release.yml')]; print('yaml ok')"
 ```
 Expected: `validators ok`, `gate passes for 1.1.0`, `gate refuses 1.1.10`, `yaml ok` (if PyYAML is missing, `python3 -c "import yaml"` fails: skip that line and rely on the push).
@@ -292,7 +292,7 @@ git commit -m "CI: validate the metainfo and desktop file; release refuses a tag
 Replace line 54:
 
 ```python
-DBUS_ID = "io.github.xb00tt.DebridApplet"  # the app id: D-Bus name (single instance), AppStream id, Flatpak id
+DBUS_ID = "io.github.xb00tt.debrid_applet"  # the app id: D-Bus name (single instance), AppStream id, Flatpak id
 ```
 
 - [ ] **Step 2: DEVELOPING layout**
@@ -307,7 +307,7 @@ with
 
 ```
 - `install.sh`, `debrid-applet.desktop`, `debrid-applet.svg`: per-user install.
-- `io.github.xb00tt.DebridApplet.metainfo.xml`: AppStream metainfo for app stores and Flathub; installed to
+- `io.github.xb00tt.debrid_applet.metainfo.xml`: AppStream metainfo for app stores and Flathub; installed to
   `/usr/share/metainfo` by the package and `~/.local/share/metainfo` by `install.sh`. The id is `DBUS_ID`; the desktop
   file and icon keep the `debrid-applet` name (a Flatpak renames them at build time).
 ```
@@ -318,9 +318,9 @@ Replace the paragraph starting `Bump \`VERSION\` in \`debrid_applet.py\`, tag` w
 
 ```
 To release: bump `VERSION` in `debrid_applet.py` and the deb file name in the README, add a `<release>` entry (newest
-first, the tag's date, one line) to `io.github.xb00tt.DebridApplet.metainfo.xml` and point its screenshot URL at the
+first, the tag's date, one line) to `io.github.xb00tt.debrid_applet.metainfo.xml` and point its screenshot URL at the
 new tag, then tag `vX.Y.Z` and push the tag. `python3 test_debrid_api.py` checks the file against `VERSION`;
-`appstreamcli validate --no-net --pedantic io.github.xb00tt.DebridApplet.metainfo.xml` is the local lint. The release
+`appstreamcli validate --no-net --pedantic io.github.xb00tt.debrid_applet.metainfo.xml` is the local lint. The release
 workflow runs the tests, refuses a tag that doesn't match `VERSION` or has no release entry, builds the `.deb` (via
 `packaging/build-deb.sh`) and a source tarball, and publishes a GitHub release with generated notes.
 `packaging/build-deb.sh` also works locally on any Debian-based box.
@@ -341,7 +341,7 @@ git commit -m "Docs: metainfo in the layout and the release checklist; DBUS_ID i
 ### Task 5: Release 1.1.1
 
 **Files:**
-- Modify: `debrid_applet.py:52` (`VERSION`), `README.md:14`, `io.github.xb00tt.DebridApplet.metainfo.xml` (release entry, screenshot tag)
+- Modify: `debrid_applet.py:52` (`VERSION`), `README.md:14`, `io.github.xb00tt.debrid_applet.metainfo.xml` (release entry, screenshot tag)
 
 **Interfaces:** none.
 
@@ -364,13 +364,13 @@ and change the screenshot `<image>` to `https://raw.githubusercontent.com/xb00tt
 
 - [ ] **Step 3: Full check**
 
-Run: `python3 test_debrid_api.py | tail -1 && appstreamcli validate --no-net --pedantic io.github.xb00tt.DebridApplet.metainfo.xml && packaging/build-deb.sh && python3 debrid_applet.py --version && dpkg-deb -c dist/debrid-applet_1.1.1_all.deb | grep -c metainfo`
+Run: `python3 test_debrid_api.py | tail -1 && appstreamcli validate --no-net --pedantic io.github.xb00tt.debrid_applet.metainfo.xml && packaging/build-deb.sh && python3 debrid_applet.py --version && dpkg-deb -c dist/debrid-applet_1.1.1_all.deb | grep -c metainfo`
 Expected: `87 passed`, no validator output, `…/dist/debrid-applet_1.1.1_all.deb`, `debrid-applet 1.1.1`, `1`.
 
 - [ ] **Step 4: Commit (no tag)**
 
 ```bash
-git add debrid_applet.py README.md io.github.xb00tt.DebridApplet.metainfo.xml
+git add debrid_applet.py README.md io.github.xb00tt.debrid_applet.metainfo.xml
 git commit -m "Release 1.1.1"
 ```
 
@@ -380,6 +380,6 @@ file in a follow-up commit before tagging.
 
 - [ ] **Step 5: After installing the new deb (maintainer, needs sudo)**
 
-Run: `appstreamcli get io.github.xb00tt.DebridApplet | head -5`
+Run: `appstreamcli get io.github.xb00tt.debrid_applet | head -5`
 Expected: the component's `Identifier`, `Name: Debrid Applet` and `Summary` lines from the system pool. If it prints
 nothing, run `appstreamcli refresh --force` once as root and retry.

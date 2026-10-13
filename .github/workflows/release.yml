@@ -21,7 +21,7 @@ jobs:
         run: |
           V=$(python3 -c "import re;print(re.search(r'VERSION = \"([^\"]+)\"', open('debrid_applet.py').read()).group(1))")
           test "v$V" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != VERSION $V"; exit 1; }
-          grep -q "<release version=\"$V\"" io.github.xb00tt.DebridApplet.metainfo.xml || { echo "metainfo lacks release $V"; exit 1; }
+          grep -q "<release version=\"$V\"" io.github.xb00tt.debrid_applet.metainfo.xml || { echo "metainfo lacks release $V"; exit 1; }
       - name: Build .deb and tarball
         run: |
           packaging/build-deb.sh
