@@ -875,7 +875,7 @@ _NOTES = []  # notifications with buttons must stay referenced until clicked or 
 def notify(title, body, actions=()):
     """Desktop notification; actions = [(label, callback)] become buttons."""
     log_event("", f"{title}: {body}")
-    note = Notify.Notification.new(title, body, APP_ID)
+    note = Notify.Notification.new(title, body, ICON_NAME)
     for label, cb in actions:
         note.add_action(label.lower().replace(" ", "-"), label, lambda _n, _a, *_, cb=cb: cb())
     try:
@@ -1470,7 +1470,7 @@ class ServiceTab(Gtk.Box):
 
     def auto_download(self, t):
         """Fetch the finished item's links and start a resumable bulk download into its own folder."""
-        tool = "aria2c" if shutil.which("aria2c") else "wget"
+        tool = download_tool(bool(host_which("aria2c")))
         dest = os.path.join(os.path.expanduser(self.app.cfg.get("download_dir") or "~/Downloads"), safe_dirname(t["name"]))
 
         def start(links, err):
@@ -1485,7 +1485,7 @@ class ServiceTab(Gtk.Box):
             os.makedirs(DATA_DIR, mode=0o700, exist_ok=True)
             log_path = os.path.join(DATA_DIR, f"download-{safe_dirname(t['name'])[:40]}.log")
             with open(os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "ab") as log:
-                proc = subprocess.Popen(download_command(urls, dest, tool, via_stdin=True), stdin=subprocess.PIPE,
+                proc = subprocess.Popen(host_cmd(download_command(urls, dest, tool, via_stdin=True)) if tool == "aria2c" else download_command(urls, dest, tool, via_stdin=True), stdin=subprocess.PIPE,
                                         stdout=log, stderr=log)
             try:
                 proc.stdin.write(("\n".join(urls) + "\n").encode())  # on stdin: other users' ps never sees the links
@@ -1924,7 +1924,7 @@ class ServiceTab(Gtk.Box):
         if custom:
             try:
                 for u in urls:  # one invocation per file; the target decides how to queue
-                    subprocess.Popen(custom_cmd(custom, u))
+                    subprocess.Popen(host_cmd(custom_cmd(custom, u)))
             except (OSError, ValueError) as e:
                 self.say(f"Custom play command failed: {e}", error=True)
                 return
@@ -1933,7 +1933,7 @@ class ServiceTab(Gtk.Box):
         if not self.app.player:
             self.say("No media player found (mpv, vlc, celluloid, smplayer or totem)")
             return
-        subprocess.Popen(playlist_cmd(self.app.player, urls))
+        subprocess.Popen(host_cmd(playlist_cmd(self.app.player, urls)))
         self.say(f"Playing {len(urls)} files in {self.app.player}")
 
     def play(self, url, name="", links=()):
@@ -1945,7 +1945,7 @@ class ServiceTab(Gtk.Box):
                 return
             sub_url = pick_subtitle(name, links) if links else None
             try:
-                subprocess.Popen(custom_cmd(custom, url, sub_url))
+                subprocess.Popen(host_cmd(custom_cmd(custom, url, sub_url)))
                 self.say(f"Sent to: {custom.split()[0]}")
             except (OSError, ValueError) as e:
                 self.say(f"Custom play command failed: {e}", error=True)
@@ -1956,7 +1956,7 @@ class ServiceTab(Gtk.Box):
         if not is_http(url):
             return
         sub_url = pick_subtitle(name, links) if links else None
-        subprocess.Popen(player_cmd(self.app.player, url, sub_url))
+        subprocess.Popen(host_cmd(player_cmd(self.app.player, url, sub_url)))
         self.say(f"Playing in {self.app.player}" + (" with subtitles" if sub_url else ""))
 
     def on_files(self, _w):
@@ -2169,9 +2169,10 @@ class Tray:
             self.icon.set_visible(False)
             self.icon = None
         if kind == "ayatana":
-            ind = Ayatana.Indicator.new(APP_ID, APP_ID, Ayatana.IndicatorCategory.APPLICATION_STATUS)
-            ind.set_icon_theme_path(HERE)  # debrid-applet.svg next to the code; the icon theme has it when packaged
-            ind.set_icon_full(APP_ID, "Debrid")
+            ind = Ayatana.Indicator.new(APP_ID, ICON_NAME, Ayatana.IndicatorCategory.APPLICATION_STATUS)
+            if not IN_FLATPAK:  # the host panel cannot read a path inside the sandbox; there the exported id resolves
+                ind.set_icon_theme_path(HERE)  # debrid-applet.svg next to the code; the icon theme has it when packaged
+            ind.set_icon_full(ICON_NAME, "Debrid")
             ind.set_status(Ayatana.IndicatorStatus.ACTIVE)
             ind.set_menu(self.menu)
             ind.set_secondary_activate_target(self.show_item)  # middle click toggles the window; left click is the menu
@@ -2207,7 +2208,7 @@ class App:
         css.load_from_data(CSS)
         Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         Gtk.IconTheme.get_default().append_search_path(HERE)  # debrid-applet.svg next to this file
-        Gtk.Window.set_default_icon_name(APP_ID)
+        Gtk.Window.set_default_icon_name(ICON_NAME)
         self.cfg = load_config()
         self.apply_log_settings()
         try:  # logs live here; keep them to this user (also fixes directories made by older versions)
@@ -2643,7 +2644,7 @@ class App:
         dlg = Gtk.AboutDialog(transient_for=self.window, modal=True, program_name="Debrid Applet", version=VERSION,
                               comments="Tray control panel for Torbox, Real-Debrid and AllDebrid.",
                               website=HOMEPAGE, website_label="GitHub: xb00tt/debrid-applet",
-                              license_type=Gtk.License.MIT_X11, authors=["xb00tt"], logo_icon_name=APP_ID)
+                              license_type=Gtk.License.MIT_X11, authors=["xb00tt"], logo_icon_name=ICON_NAME)
         dlg.add_button("Check for updates", 1)
         dlg.connect("response", lambda d, r: (d.destroy(), self.check_updates(True)) if r == 1 else d.destroy())
         dlg.show()

@@ -1751,6 +1751,17 @@ def test_flatpak_helpers():
     assert "debrid-applet --toggle" in da.toggle_hint(False) and "flatpak" not in da.toggle_hint(False)
 
 
+def test_host_launch_sites():
+    src = open("debrid_applet.py").read()
+    assert src.count("subprocess.Popen(host_cmd(") == 5, "players, playlist, custom command x2 and the downloader go through host_cmd"
+    for bare in ("subprocess.Popen(player_cmd(", "subprocess.Popen(playlist_cmd(", "subprocess.Popen(custom_cmd(",
+                 "subprocess.Popen(download_command("):
+        assert bare not in src, bare
+    assert 'shutil.which("aria2c")' not in src and "download_tool(bool(host_which(" in src
+    assert "Notify.Notification.new(title, body, ICON_NAME)" in src and "set_default_icon_name(ICON_NAME)" in src
+    assert "logo_icon_name=ICON_NAME" in src and "Ayatana.Indicator.new(APP_ID, ICON_NAME" in src
+
+
 if __name__ == "__main__":
     import sys
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
