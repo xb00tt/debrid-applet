@@ -8,16 +8,16 @@ Open notes:
 - Keyring storage for API keys was removed after it lost keys twice on this machine; if it comes back it needs a cross-restart verification step before the file copy is dropped.
 - Another service (Premiumize etc.): recipe in the README's Dev section; only with an account to test against.
 - AllDebrid hoster-link unlock: request path verified live; a successful unlock of a real hoster link hasn't been observed yet.
-- Auth errors during outages (v1.2.1): spec in `docs/superpowers/specs/2026-10-13-auth-error-design.md`. Observed
-  2026-10-13: one `Invalid API key` from Torbox mid-outage opened Settings with a valid key. Fix: evidence in the message,
-  a 403 without JSON is a plain HTTP error, and a second `account()` call confirms before Settings opens. Torbox's auth
-  codes are undocumented (`AUTH_ERROR` semantics unknown); revisit `TORBOX_AUTH_ERRORS` when a logged incident shows one.
+- Torbox's auth codes are undocumented (`AUTH_ERROR` semantics unknown). Since v1.2.1 invalid-key errors log the HTTP
+  status and code and Settings opens only after a second rejection; revisit `TORBOX_AUTH_ERRORS` when a logged incident
+  shows a code that was not `BAD_TOKEN` (a bad key answers `HTTP 403 BAD_TOKEN`, observed 2026-10-13).
 
-Roadmap (decided 2026-10-13, from the "full-fledged Linux app" discussion; goal is reach for other users, kept light):
+Roadmap (decided 2026-10-13, from the "full-fledged Linux app" discussion; goal is reach for other users, kept light).
+Items 1-4 shipped by v1.2.1; 3 is built but unpublished by decision; 5 is deferred:
 
 1. **Universal deb** (v1.1.0): spec in `docs/superpowers/specs/2026-10-13-universal-deb-design.md`. Tray adapter (XApp
    where a host answers, Ayatana elsewhere, tray-less mode as last resort), Quit in the window and `Ctrl+Q`, Wayland hint
-   on the clipboard watcher, both tray libraries as Recommends. Next: implementation plan.
+   on the clipboard watcher, both tray libraries as Recommends. Shipped.
 2. **App id and AppStream metainfo** (v1.1.1, id corrected in v1.1.2 and again in v1.2.0): spec in
    `docs/superpowers/specs/2026-10-13-app-id-metainfo-design.md`. The AppStream id and metainfo file name follow the
    D-Bus id, now `io.github.xb00tt.debrid-applet`; nothing upstream is renamed (the self-updater's `FILES` and per-user
@@ -30,8 +30,9 @@ Roadmap (decided 2026-10-13, from the "full-fledged Linux app" discussion; goal 
    `shared-modules` submodule) and the `finish-args-flatpak-spawn-access` exception PR in
    `flathub/flatpak-builder-lint` (text in the spec). Until that exception, the Flatpak plays in the browser and
    downloads with the built-in wget.
-4. **Tarball for other distros**: already works via `install.sh`; add one dependency line per distro (Fedora, Arch,
-   openSUSE) to the README. RPM spec / AUR PKGBUILD only if someone asks; Flatpak covers those distros.
+4. **Tarball for other distros**: works via `install.sh`; the README has a dependency line each for Fedora, Arch and
+   openSUSE (package names from the distros' indexes, not tried on them: no VMs here). RPM spec / AUR PKGBUILD only if
+   someone asks.
 5. **Daemon + frontend split**: deferred, no user has asked and Flatpak cannot ship a systemd user unit anyway. If it
    ever comes: first pull a `Service` model (client, account, torrents, pending, done set, retries, finished-item
    rules) out of `ServiceTab`, which is worth doing alone for testability; then a GLib-only daemon reusing the loopback

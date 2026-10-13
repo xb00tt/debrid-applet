@@ -8,6 +8,7 @@ os.environ["DEBRID_APPLET_CONFIG_DIR"] = "/tmp/debrid-test-config"
 os.environ["DEBRID_APPLET_DATA_DIR"] = "/tmp/debrid-test-data"
 
 from debrid_api import AllDebrid, ApiError, RealDebrid, Torbox, human_size, magnet_hash
+from debrid_api import is_invalid_key as debrid_api_is_invalid_key
 
 RD = "https://api.real-debrid.com/rest/1.0"
 TB = "https://api.torbox.app/v1/api"
@@ -698,6 +699,19 @@ def test_tb_bad_token_is_invalid_key():
         assert False
     except ApiError as e:
         assert str(e) == "Invalid API key (BAD_TOKEN)"
+    # only BAD_TOKEN is a verdict on the key (observed 2026-10-13; no key is a 401 without a code). Other codes,
+    # AUTH_ERROR included, show as the service's own message and never open Settings.
+    for code in ("AUTH_ERROR", "NO_AUTH", "DATABASE_ERROR"):
+        try:
+            Torbox("t", FakeSession(FakeResp(200, {"success": False, "error": code, "detail": "Something failed.", "data": None}))).account()
+            assert False
+        except ApiError as e:
+            assert str(e) == "Something failed." and not debrid_api_is_invalid_key(str(e)), (code, str(e))
+    try:  # a 403 carrying such a code is not a verdict either
+        Torbox("t", FakeSession(FakeResp(403, {"success": False, "error": "AUTH_ERROR", "detail": "Auth service down.", "data": None}))).account()
+        assert False
+    except ApiError as e:
+        assert str(e) == "Auth service down."
 
 
 def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
