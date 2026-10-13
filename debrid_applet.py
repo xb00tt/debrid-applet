@@ -2063,6 +2063,76 @@ class ServiceTab(Gtk.Box):
         self._run(work, done)
 
 
+class Tray:
+    """The status icon behind one interface. XApp where a host answers (Cinnamon, XFCE and MATE with the xapp
+    applet), Ayatana / StatusNotifier elsewhere (KDE, GNOME with its AppIndicator extension, any desktop running
+    xapp-sn-watcher), nothing as a last resort. XApp reports 'no-support' at construction and the real state on
+    'state-changed' (about 1 ms later on Cinnamon), so the choice waits for that signal or a 2 s timer, then
+    on_decided(kind) runs once on the main loop. The count is kept and replayed onto whichever backend wins."""
+
+    def __init__(self, app, menu, show_item, on_decided):
+        self.app, self.menu, self.show_item, self.on_decided = app, menu, show_item, on_decided
+        self.kind = None
+        self.icon = self.indicator = None
+        self._count = (0, POLL_SLOW)
+        self._timer = 0
+        forced = os.environ.get("DEBRID_APPLET_TRAY", "")
+        if XApp is not None and forced in ("", "xapp"):
+            self.icon = XApp.StatusIcon()
+            self.icon.set_name(APP_ID)
+            self.icon.set_icon_name(os.path.join(HERE, APP_ID + ".svg"))
+            self.icon.set_tooltip_text("Debrid")
+            self.icon.connect("activate", app.toggle_window)  # left click; the menu's first entry does the same
+            self.icon.set_secondary_menu(menu)
+            self.icon.connect("state-changed", self._on_state)
+            self._timer = GLib.timeout_add_seconds(2, lambda: self._decide(self.icon.get_state().value_nick) and False)
+        else:
+            GLib.idle_add(lambda: self._decide(None) and False)  # after App.__init__, like the signal would be
+
+    def _on_state(self, _icon, state):
+        if state.value_nick != "no-support":  # native or fallback: the host has answered; no-support may still change
+            self._decide(state.value_nick)
+
+    def _decide(self, xapp_state):
+        if self.kind is not None:  # the signal and the timer both end here; the first one wins
+            return
+        if self._timer:
+            GLib.source_remove(self._timer)
+            self._timer = 0
+        kind = tray_choice(xapp_state, self.icon is not None, Ayatana is not None, os.environ.get("DEBRID_APPLET_TRAY", ""))
+        if kind not in ("xapp", "xapp-fallback") and self.icon is not None:
+            self.icon.set_visible(False)
+            self.icon = None
+        if kind == "ayatana":
+            ind = Ayatana.Indicator.new(APP_ID, APP_ID, Ayatana.IndicatorCategory.APPLICATION_STATUS)
+            ind.set_icon_theme_path(HERE)  # debrid-applet.svg next to the code; the icon theme has it when packaged
+            ind.set_icon_full(APP_ID, "Debrid")
+            ind.set_status(Ayatana.IndicatorStatus.ACTIVE)
+            ind.set_menu(self.menu)
+            ind.set_secondary_activate_target(self.show_item)  # middle click toggles the window; left click is the menu
+            self.indicator = ind
+        self.kind = kind
+        self.set_count(*self._count)
+        log_event("", f"Tray: {kind}")
+        self.on_decided(kind)
+
+    def set_count(self, active, interval):
+        """Label 'N↓' and tooltip; indicators have no tooltip, their title carries the text."""
+        self._count = (active, interval)
+        label = f"{active}↓" if active else ""
+        tip = f"Debrid · {active} item(s) still downloading · polling every {interval} s"
+        if self.icon is not None:
+            self.icon.set_label(label)
+            self.icon.set_tooltip_text(tip)
+        elif self.indicator is not None:
+            self.indicator.set_label(label, "")
+            self.indicator.set_title(tip)
+
+    def present(self):
+        """True when a host is known to show the icon."""
+        return self.kind in ("xapp", "ayatana")
+
+
 class App:
     def __init__(self, gapp):
         self.gapp = gapp
@@ -2090,21 +2160,18 @@ class App:
         self._settings_shown_for = None
         self.tabs = []
 
-        # Cinnamon-native tray icon: left click toggles the window, right click opens the menu.
-        self.icon = XApp.StatusIcon()
-        self.icon.set_name(APP_ID)
-        self.icon.set_icon_name(os.path.join(HERE, "debrid-applet.svg"))
-        self.icon.set_tooltip_text("Debrid")
-        self.icon.connect("activate", self.toggle_window)
-        menu = Gtk.Menu()
-        for label, cb in (("Refresh", self.refresh), ("Settings…", self.open_settings),
-                          ("Check for updates…", lambda *_: self.check_updates(True)), ("About…", self.open_about),
-                          ("Quit", lambda *_: self.gapp.quit())):
+        menu = Gtk.Menu()  # right-click on XApp, any click on an indicator; "Show / hide" first for hosts without left-click
+        show_item = None
+        for label, cb in (("Show / hide window", self.toggle_window), ("Refresh", self.refresh),
+                          ("Settings…", self.open_settings), ("Check for updates…", lambda *_: self.check_updates(True)),
+                          ("About…", self.open_about), ("Quit", lambda *_: self.gapp.quit())):
             item = Gtk.MenuItem(label=label)
             item.connect("activate", cb)
             menu.append(item)
+            show_item = show_item or item
         menu.show_all()
-        self.icon.set_secondary_menu(menu)
+        self._hide_hint_shown = False  # tray-less mode: the first hide of the session explains how to come back
+        self.tray = Tray(self, menu, show_item, self._on_tray_decided)
         self.watcher = WatchFolder(self)
         self.feeds = FeedWatcher(self)
         self.api = None
@@ -2252,11 +2319,20 @@ class App:
         self.cfg["window"] = list(self.window.get_size())
         save_config(self.cfg)
         self.window.hide()
+        if self.tray.kind is not None and not self.tray.present() and not self._hide_hint_shown:
+            self._hide_hint_shown = True
+            notify("Debrid Applet keeps running", "Open it from the menu or debrid-applet --toggle; Quit is in the ⋮ menu.")
 
     def toggle_window(self, *_):
         if self.window.is_visible():
             self.hide_window()
         else:
+            self.window.show_all()
+            self.window.present()
+
+    def _on_tray_decided(self, _kind):
+        """No host shows the icon: the window is the only handle on the applet, so it starts visible."""
+        if not self.tray.present() and not self.window.is_visible():
             self.window.show_all()
             self.window.present()
 
@@ -2291,8 +2367,7 @@ class App:
                         t._stale = True
             finally:  # a failing render must never stop the polling cycle
                 active = sum(t.active for t in self.tabs if not t.is_merged)  # the All tab mirrors the others
-                self.icon.set_label(f"{active}↓" if active else "")
-                self.icon.set_tooltip_text(f"Debrid · {active} item(s) still downloading · polling every {self._interval} s")
+                self.tray.set_count(active, self._interval)
                 self._schedule(POLL_FAST if active or any(t._pending for t in self.tabs) else POLL_SLOW)
                 trim_memory()
                 if self._again:
