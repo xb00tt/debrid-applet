@@ -4,7 +4,7 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <name>Debrid Applet</name>
-  <summary>Torbox, Real-Debrid and AllDebrid in one tray window</summary>
+  <summary>Debrid services in one tray window</summary>
   <description>
     <p>Shows account status and every torrent with live progress, adds magnets, .torrent files and hoster links,
        streams or downloads the results, and automates the rest: watch folder, RSS feeds, auto-download, local API.</p>

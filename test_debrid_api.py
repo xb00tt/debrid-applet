@@ -1706,6 +1706,12 @@ def test_metainfo():
     assert versions == sorted(versions, reverse=True) and len(set(versions)) == len(versions), "releases must be newest first"
     image = root.findtext("screenshots/screenshot/image")
     assert image.startswith("https://") and f"/v{da.VERSION}/" in image, image
+    assert len(root.findtext("summary")) <= 35, "Flathub quality guideline: summary at most 35 characters"
+    import struct
+    with open("docs/screenshot.png", "rb") as f:  # the image the URL points at, once the tag exists
+        assert f.read(8) == b"\x89PNG\r\n\x1a\n" and f.read(8)[4:] == b"IHDR"
+        width, height = struct.unpack(">II", f.read(8))
+    assert width <= 1000 and height <= 700, f"Flathub quality guideline: screenshot at most 1000x700, got {width}x{height}"
     assert not re.search(r"<developer_name>", open(METAINFO).read())  # deprecated since AppStream 1.0
 
 
