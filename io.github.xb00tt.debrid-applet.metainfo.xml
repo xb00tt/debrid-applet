@@ -21,10 +21,11 @@
   <screenshots>
     <screenshot type="default">
       <caption>The All tab with items from every service</caption>
-      <image>https://raw.githubusercontent.com/xb00tt/debrid-applet/v1.2.0/docs/screenshot.png</image>
+      <image>https://raw.githubusercontent.com/xb00tt/debrid-applet/v1.2.1/docs/screenshot.png</image>
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.2.1" date="2026-10-13"><description><p>Settings opens only after a service rejects the key twice; invalid-key errors name the status and code; a 403 without JSON is a plain error.</p></description></release>
     <release version="1.2.0" date="2026-10-13"><description><p>Flatpak build for Flathub: players and downloads run on the host or fall back to the browser and the built-in wget; app id io.github.xb00tt.debrid-applet (restart a running 1.1.x applet after upgrading, or a second instance can start).</p></description></release>
     <release version="1.1.2" date="2026-10-13"><description><p>App id is io.github.xb00tt.debrid_applet, the form Flathub maps to the repository; metainfo within Flathub's quality guidelines; install.sh never stops on store data.</p></description></release>
     <release version="1.1.1" date="2026-10-13"><description><p>AppStream metainfo for app stores.</p></description></release>

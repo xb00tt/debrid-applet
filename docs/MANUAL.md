@@ -185,6 +185,9 @@ Notifications, clipboard watcher and remembered filter are on by default; everyt
 ## Troubleshooting
 
 - **Tabs say "Not configured"**: open Settings → Accounts and check the keys; Test keys tells you which one fails.
+  Settings opens by itself only after a service rejected the key twice in a row; the activity log names the HTTP
+  status and/or code it answered with (`Invalid API key (HTTP 403 BAD_TOKEN)`), and a one-off rejection during an outage
+  is logged as "Transient auth error ignored".
   If the keys vanished, `~/.config/debrid-applet/config.json.bak` is the last version that still had them.
 - **Two tray icons**: one is a leftover from an instance that was killed mid-poll; it disappears on the next restart
   of the applet, or restart Cinnamon (Ctrl+Alt+Esc on Mint).
