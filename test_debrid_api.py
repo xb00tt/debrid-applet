@@ -1699,9 +1699,10 @@ def test_metainfo():
     assert root.find("content_rating").get("type") == "oars-1.1"
     releases = root.findall("releases/release")
     assert releases and releases[0].get("version") == da.VERSION
-    today = datetime.date.today().isoformat()
+    # one day of slack: the release workflow runs in UTC, a tag made before 03:00 here carries tomorrow's UTC date
+    latest = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
     versions = [tuple(int(p) for p in r.get("version").split(".")) for r in releases]
-    assert all(r.get("date") <= today for r in releases), "a release is dated in the future"
+    assert all(r.get("date") <= latest for r in releases), "a release is dated in the future"
     assert versions == sorted(versions, reverse=True) and len(set(versions)) == len(versions), "releases must be newest first"
     image = root.findtext("screenshots/screenshot/image")
     assert image.startswith("https://") and f"/v{da.VERSION}/" in image, image
