@@ -24,17 +24,23 @@ Roadmap (decided 2026-10-13, from the "full-fledged Linux app" discussion; goal 
    D-Bus id, now `io.github.xb00tt.debrid-applet`; nothing upstream is renamed (the self-updater's `FILES` and per-user
    autostart entries would break); the Flatpak installs renamed copies of the desktop file, icon and metainfo from its
    build commands. CI validates the metainfo; the test suite ties the newest release entry to `VERSION`.
-3. **Flatpak on Flathub** (v1.2.0): built and verified locally, spec in `docs/superpowers/specs/2026-10-13-flatpak-design.md`.
-   Pending (maintainer): the Flathub PR (`flathub/flathub`, branch `new-pr`, manifest `packaging/io.github.xb00tt.debrid-applet.yml` with
-   `commit:` added next to `tag:`, plus `python3-requirements.json` and the `shared-modules` submodule) and the
-   `finish-args-flatpak-spawn-access` exception PR in `flathub/flatpak-builder-lint` (text in the spec). Until the
-   exception lands, the Flatpak plays in the browser and downloads with the built-in wget.
+3. **Flatpak** (v1.2.0): built and verified locally, spec in `docs/superpowers/specs/2026-10-13-flatpak-design.md`.
+   **Flathub publication is parked (decided 2026-10-13); not any time soon.** The manifest in `packaging/` stays
+   maintained with each release (the test moves its `tag:` with `VERSION`). When publication is back on: the Flathub
+   PR (`flathub/flathub`, branch `new-pr`, manifest with `commit:` next to `tag:`, `python3-requirements.json`, the
+   `shared-modules` submodule) and the `finish-args-flatpak-spawn-access` exception PR in
+   `flathub/flatpak-builder-lint` (text in the spec). Until that exception, the Flatpak plays in the browser and
+   downloads with the built-in wget.
 4. **Tarball for other distros**: already works via `install.sh`; add one dependency line per distro (Fedora, Arch,
    openSUSE) to the README. RPM spec / AUR PKGBUILD only if someone asks; Flatpak covers those distros.
 5. **Daemon + frontend split**: deferred, no user has asked and Flatpak cannot ship a systemd user unit anyway. If it
    ever comes: first pull a `Service` model (client, account, torrents, pending, done set, retries, finished-item
    rules) out of `ServiceTab`, which is worth doing alone for testability; then a GLib-only daemon reusing the loopback
    HTTP API with per-item revisions (12k-item lists must not cross IPC whole every 8 s).
+
+Verification on other desktops (GNOME, KDE, XFCE, Wayland) and other distros (Fedora, Arch): **no VMs on this machine
+(decided 2026-10-13)**; everything beyond Cinnamon on X11 is covered by library-source reading, unit tests and user
+reports. Do not propose a VM matrix again.
 
 Not planned: GTK4 / libadwaita (rewrite, heavier, foreign on Cinnamon), AppImage and Snap (bundling PyGObject and GTK by
 hand for no extra audience).
