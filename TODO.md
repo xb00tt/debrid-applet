@@ -14,8 +14,11 @@ Roadmap (decided 2026-10-13, from the "full-fledged Linux app" discussion; goal 
 1. **Universal deb** (v1.1.0): spec in `docs/superpowers/specs/2026-10-13-universal-deb-design.md`. Tray adapter (XApp
    where a host answers, Ayatana elsewhere, tray-less mode as last resort), Quit in the window and `Ctrl+Q`, Wayland hint
    on the clipboard watcher, both tray libraries as Recommends. Next: implementation plan.
-2. **Reverse-DNS app id and AppStream metainfo**: `io.github.xb00tt.DebridApplet` for the desktop file, icon and
-   metainfo (Flathub requires it); postinst removes the old autostart entry. Done once, with the Flatpak step.
+2. **App id and AppStream metainfo** (v1.1.1): spec in `docs/superpowers/specs/2026-10-13-app-id-metainfo-design.md`.
+   `io.github.xb00tt.DebridApplet` (already the D-Bus id) becomes the AppStream id and metainfo file name; nothing
+   upstream is renamed (the self-updater's `FILES` and per-user autostart entries would break); the Flatpak renames
+   the desktop file and icon at build time with `rename-desktop-file` / `rename-icon`. CI validates the metainfo and
+   refuses a tag without a `<release>` entry.
 3. **Flatpak on Flathub**: freedesktop runtime (670 MB, yearly branches; ships GTK3, libnotify, typelibs and Python but
    not `gi`), PyGObject built in the manifest with pycairo disabled (the code never touches cairo), requests and
    defusedxml vendored. Host commands via `flatpak-spawn --host` for players, aria2c, wget and xdg-open (one helper,
