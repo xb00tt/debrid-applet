@@ -9,12 +9,12 @@ import requests
 TIMEOUT = 15
 USER_AGENT = "debrid-applet"
 INVALID_KEY = "Invalid API key"
+TORBOX_AUTH_ERRORS = ("NO_AUTH", "BAD_TOKEN", "AUTH_ERROR")
 
 
 def is_invalid_key(message):
     """The service rejected the key: INVALID_KEY plus the evidence in brackets (status, code)."""
     return str(message).startswith(INVALID_KEY)
-TORBOX_AUTH_ERRORS = ("NO_AUTH", "BAD_TOKEN", "AUTH_ERROR")
 
 # One vocabulary for every service's download state; the service's own word travels along as "raw_state".
 QUEUED, DOWNLOADING, PROCESSING, DONE, SEEDING, STALLED, EXPIRED, ERROR = (

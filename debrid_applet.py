@@ -49,7 +49,7 @@ from debrid_api import (DONE, DOWNLOADING, ERROR, EXPIRED, PROCESSING, QUEUED, S
 from debrid_local_api import LocalApi  # noqa: E402
 from debrid_update import deb_command, download, install_mode, install_user, latest_release, verify_signature  # noqa: E402
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 APP_ID = "debrid-applet"  # WM_CLASS, icon name and .desktop basename all match
 DBUS_ID = "io.github.xb00tt.debrid-applet"  # the app id: D-Bus name (single instance), AppStream id, Flatpak id
 IN_FLATPAK = install_mode(HERE) == "flatpak"
@@ -1520,16 +1520,15 @@ class ServiceTab(Gtk.Box):
         """A service said the key is invalid. Outages have said so with a valid key (Torbox, 2026-10-13), so ask once
         more with account(); Settings opens only when that answer is a rejection too."""
         now = time.monotonic()
-        if self.client is None or not should_confirm_auth(self._auth_checked_at, now):
-            return
+        if self.client is None or self.is_merged or not should_confirm_auth(self._auth_checked_at, now):
+            return  # the All tab routes actions to a real client; that service's own tab confirms on its next poll
         self._auth_checked_at = now
 
         def done(_account, err):
-            if self not in self.app.tabs:  # Settings rebuilt the tabs meanwhile; nothing to show here
-                return
             if auth_confirmed(err):
                 log_event(self.name, f"Invalid API key confirmed by a second request: {first} / {err}", "error")
-                self.app.open_settings_once()
+                if self in self.app.tabs:  # unless Settings rebuilt the tabs meanwhile (a new key set is in play)
+                    self.app.open_settings_once()
             else:
                 log_event(self.name, f"Transient auth error ignored: {first}; check said: {err or 'OK'}", "error")
         run_async(self.client.account, done)
