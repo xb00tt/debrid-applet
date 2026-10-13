@@ -22,6 +22,9 @@ mangles `[` and `|` on some keyboard layouts, so use the clipboard or bracket-fr
   forces a backend for testing: Cinnamon's xapp-sn-watcher shows the Ayatana path on one box).
 - `test_debrid_api.py`: the offline suite; run it directly, no test runner needed.
 - `install.sh`, `debrid-applet.desktop`, `debrid-applet.svg`: per-user install.
+- `io.github.xb00tt.DebridApplet.metainfo.xml`: AppStream metainfo for app stores and Flathub; installed to
+  `/usr/share/metainfo` by the package and `~/.local/share/metainfo` by `install.sh`. The id is `DBUS_ID`; the desktop
+  file and icon keep the `debrid-applet` name (a Flatpak renames them at build time).
 - `packaging/build-deb.sh`: builds the Debian package the release workflow publishes.
 - `.github/workflows/`: `tests.yml` on every push, `release.yml` on `v*` tags.
 - `docs/MANUAL.md`: the user manual; `docs/superpowers/`: the original design spec and plan.
@@ -40,9 +43,13 @@ mangles `[` and `|` on some keyboard layouts, so use the clipboard or bracket-fr
 
 ## Releases
 
-Bump `VERSION` in `debrid_applet.py`, tag `vX.Y.Z` and push the tag. The release workflow runs the tests, refuses a
-tag that doesn't match `VERSION`, builds the `.deb` (via `packaging/build-deb.sh`) and a source tarball, and publishes
-a GitHub release with generated notes. `packaging/build-deb.sh` also works locally on any Debian-based box.
+To release: bump `VERSION` in `debrid_applet.py` and the deb file name in the README, add a `<release>` entry (newest
+first, the tag's date, one line) to `io.github.xb00tt.DebridApplet.metainfo.xml` and point its screenshot URL at the
+new tag, then tag `vX.Y.Z` and push the tag. `python3 test_debrid_api.py` checks the file against `VERSION`;
+`appstreamcli validate --no-net --pedantic io.github.xb00tt.DebridApplet.metainfo.xml` is the local lint. The release
+workflow runs the tests, refuses a tag that doesn't match `VERSION` or has no release entry, builds the `.deb` (via
+`packaging/build-deb.sh`) and a source tarball, and publishes a GitHub release with generated notes.
+`packaging/build-deb.sh` also works locally on any Debian-based box.
 
 Releases are signed: the workflow signs the `.deb` and the tarball with OpenSSH signatures (`ssh-keygen -Y sign`,
 namespace `debrid-applet-X.Y.Z`, so a signed asset of one release cannot be re-published as another) using the
