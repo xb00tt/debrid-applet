@@ -1735,7 +1735,7 @@ def test_flatpak_helpers():
     da._host_which_cache.clear()
     assert da.host_which("mpv", in_flatpak=True, run=fake_run) == "/usr/bin/mpv"
     assert da.host_which("mpv", in_flatpak=True, run=fake_run) == "/usr/bin/mpv" and len(calls) == 1  # cached
-    assert calls[0] == ["flatpak-spawn", "--host", "which", "mpv"]
+    assert calls[0] == ["flatpak-spawn", "--host", "sh", "-c", 'command -v "$1"', "sh", "mpv"]  # `which` is not on every host
 
     def refused(argv, **kw):  # no exception granted: flatpak-spawn exits 1 (portal call failed)
         return subprocess.CompletedProcess(argv, 1, stdout="", stderr="Portal call failed")
@@ -1748,6 +1748,15 @@ def test_flatpak_helpers():
     assert da.host_which("mpv", in_flatpak=True, run=exploding) is None
     da._host_which_cache.clear()
     assert da.download_tool(True) == "aria2c" and da.download_tool(False) == "wget"
+    assert da.default_download_dir(False) == "~/Downloads"
+    # inside the sandbox everything outside the granted dirs is the private tmpfs root: refuse before writing there
+    class St:
+        def __init__(self, dev): self.st_dev = dev
+    devs = {"/": 67, "/home/u": 67, "/home/u/Downloads": 66306, "/home/u/Downloads/x": 66306}
+    fake_stat = lambda path: St(devs[path]) if path in devs else (_ for _ in ()).throw(FileNotFoundError(path))
+    assert da.sandbox_private("/home/u/Videos/new", stat=fake_stat)  # nearest existing parent is the tmpfs home
+    assert not da.sandbox_private("/home/u/Downloads/x/new/deeper", stat=fake_stat)  # under the granted bind mount
+    assert "flatpak override --user --talk-name=org.freedesktop.Flatpak io.github.xb00tt.debrid-applet" in da.HOST_DENIED
     assert "flatpak run io.github.xb00tt.debrid-applet --toggle" in da.toggle_hint(True)
     assert da.config_dir({}, False) == os.path.expanduser("~/.config/debrid-applet")
     assert da.config_dir({"XDG_CONFIG_HOME": "/x/cfg"}, False) == os.path.expanduser("~/.config/debrid-applet")  # deb: unchanged
@@ -1760,7 +1769,8 @@ def test_flatpak_helpers():
 
 def test_host_launch_sites():
     src = open("debrid_applet.py").read()
-    assert src.count("subprocess.Popen(host_cmd(") == 5, "players, playlist, custom command x2 and the downloader go through host_cmd"
+    assert src.count("subprocess.Popen(host_cmd(") == 4, "players, playlist and custom command x2 go through host_cmd"
+    assert "argv = host_cmd(argv)" in src, "the aria2c download goes through host_cmd; wget stays in the sandbox"
     for bare in ("subprocess.Popen(player_cmd(", "subprocess.Popen(playlist_cmd(", "subprocess.Popen(custom_cmd(",
                  "subprocess.Popen(download_command("):
         assert bare not in src, bare

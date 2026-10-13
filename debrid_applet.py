@@ -280,7 +280,8 @@ def host_which(name, in_flatpak=None, run=subprocess.run):
         return shutil.which(name)
     if name not in _host_which_cache:
         try:
-            r = run(host_cmd(["which", name], in_flatpak=True), capture_output=True, text=True, timeout=5)
+            probe = ["sh", "-c", 'command -v "$1"', "sh", name]  # `which` is not POSIX and not on every host
+            r = run(host_cmd(probe, in_flatpak=True), capture_output=True, text=True, timeout=5)
             _host_which_cache[name] = r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
         except (OSError, subprocess.SubprocessError):
             _host_which_cache[name] = None
@@ -290,6 +291,32 @@ def host_which(name, in_flatpak=None, run=subprocess.run):
 def download_tool(have_aria2c):
     """aria2c on the host when reachable, else wget: the freedesktop runtime ships wget, so the sandbox always has one."""
     return "aria2c" if have_aria2c else "wget"
+
+
+def default_download_dir(in_flatpak):
+    """~/Downloads, or inside the sandbox the granted XDG download dir (localized names differ from "Downloads")."""
+    if in_flatpak:
+        return GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD) or "~/Downloads"
+    return "~/Downloads"
+
+
+def sandbox_private(path, stat=os.stat, root="/"):
+    """True when path (or its nearest existing parent) sits on the sandbox's private root filesystem: inside a
+    Flatpak everything outside the granted directories is a tmpfs that vanishes with the process, and
+    os.makedirs there succeeds silently. Granted directories are bind mounts with their own device number."""
+    p = os.path.abspath(path)
+    while True:
+        try:
+            return stat(p).st_dev == stat(root).st_dev
+        except FileNotFoundError:
+            parent = os.path.dirname(p)
+            if parent == p:
+                return True
+            p = parent
+
+
+HOST_DENIED = (f"Host commands are not permitted for this Flatpak; allow them with: "
+               f"flatpak override --user --talk-name=org.freedesktop.Flatpak {DBUS_ID}")
 
 
 def toggle_hint(in_flatpak):
@@ -307,8 +334,8 @@ AUTOSTART_FALLBACK = ("Autostart is not available through your desktop's portal"
 
 
 def request_autostart(on_result):
-    """Ask the Background portal to start the app at login (flatpak only). on_result(True/False) runs on the main
-    loop; any D-Bus error counts as False. The Response arrives as a signal on the request handle, so the
+    """Ask the Background portal to start the app at login (flatpak only). on_result(ok, cancelled=False) runs on
+    the main loop; any D-Bus error counts as not ok, a decline by the user as cancelled. The Response arrives as a signal on the request handle, so the
     subscription is made before the call and the handle token is chosen here."""
     try:
         bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
@@ -319,7 +346,7 @@ def request_autostart(on_result):
         def on_response(_c, _s, _p, _i, _sig, params):
             code, results = params.unpack()
             bus.signal_unsubscribe(sub)
-            on_result(code == 0 and bool(results.get("autostart")))
+            on_result(code == 0 and bool(results.get("autostart")), cancelled=code == 1)  # 1: the user said no
         sub = bus.signal_subscribe("org.freedesktop.portal.Desktop", "org.freedesktop.portal.Request", "Response",
                                    handle, None, Gio.DBusSignalFlags.NONE, on_response)
         opts = {"handle_token": GLib.Variant("s", token),
@@ -1533,7 +1560,8 @@ class ServiceTab(Gtk.Box):
     def auto_download(self, t):
         """Fetch the finished item's links and start a resumable bulk download into its own folder."""
         tool = download_tool(bool(host_which("aria2c")))
-        dest = os.path.join(os.path.expanduser(self.app.cfg.get("download_dir") or "~/Downloads"), safe_dirname(t["name"]))
+        base = os.path.expanduser(self.app.cfg.get("download_dir") or default_download_dir(IN_FLATPAK))
+        dest = os.path.join(base, safe_dirname(t["name"]))
 
         def start(links, err):
             if err:
@@ -1543,12 +1571,18 @@ class ServiceTab(Gtk.Box):
             if not urls:
                 self.say(f"Auto-download: no links for {t['name'][:40]}", error=True)
                 return
+            if IN_FLATPAK and tool == "wget" and sandbox_private(dest):  # would "download" into the sandbox's tmpfs
+                self.say(f"Download folder {base} is not reachable inside the Flatpak; allow it with: "
+                         f"flatpak override --user --filesystem={base} {DBUS_ID}", error=True)
+                return
             os.makedirs(dest, exist_ok=True)
             os.makedirs(DATA_DIR, mode=0o700, exist_ok=True)
             log_path = os.path.join(DATA_DIR, f"download-{safe_dirname(t['name'])[:40]}.log")
+            argv = download_command(urls, dest, tool, via_stdin=True)
+            if tool == "aria2c":  # runs on the host; wget is the runtime's own and stays in the sandbox
+                argv = host_cmd(argv)
             with open(os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "ab") as log:
-                proc = subprocess.Popen(host_cmd(download_command(urls, dest, tool, via_stdin=True)) if tool == "aria2c" else download_command(urls, dest, tool, via_stdin=True), stdin=subprocess.PIPE,
-                                        stdout=log, stderr=log)
+                proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=log, stderr=log)
             try:
                 proc.stdin.write(("\n".join(urls) + "\n").encode())  # on stdin: other users' ps never sees the links
                 proc.stdin.close()
@@ -1984,6 +2018,9 @@ class ServiceTab(Gtk.Box):
         custom = (self.app.cfg.get("player_command") or "").strip()
         urls = [u for u in urls if is_http(u)]
         if custom:
+            if IN_FLATPAK and not host_which("sh"):
+                self.say(HOST_DENIED, error=True)
+                return
             try:
                 for u in urls:  # one invocation per file; the target decides how to queue
                     subprocess.Popen(host_cmd(custom_cmd(custom, u)))
@@ -2007,6 +2044,9 @@ class ServiceTab(Gtk.Box):
         custom = (self.app.cfg.get("player_command") or "").strip()
         if custom:
             if not is_http(url):
+                return
+            if IN_FLATPAK and not host_which("sh"):
+                self.say(HOST_DENIED, error=True)
                 return
             sub_url = pick_subtitle(name, links) if links else None
             try:
@@ -2334,9 +2374,9 @@ class App:
             self.cfg["autostart_asked"] = True
             save_config(self.cfg)
 
-            def autostart_result(ok):
-                log_event("", f"Autostart via the Background portal: {'granted' if ok else 'not available'}")
-                if not ok:
+            def autostart_result(ok, cancelled=False):
+                log_event("", f"Autostart via the Background portal: {'granted' if ok else 'declined' if cancelled else 'not available'}")
+                if not ok and not cancelled:
                     notify(*AUTOSTART_FALLBACK)
             request_autostart(autostart_result)
         GLib.timeout_add_seconds(60, lambda: self._check_updates_auto() and False)  # once, shortly after start
@@ -2915,6 +2955,8 @@ class SettingsForm:
         self._check(g, "auto_download_videos_only", "    …video files only")
         self._check(g, "delete_after_download", "    …then delete it from the service")
         self._entry(g, "download_dir", "Download folder", hint="~/Downloads")
+        if IN_FLATPAK:
+            self._note(g, f"Only the Downloads folder is reachable; another folder needs: flatpak override --user --filesystem=<folder> {DBUS_ID}")
         self._check(g, "stop_seeding_when_done", "Torbox: stop seeding right away")
 
     def _advanced(self):
@@ -2926,8 +2968,8 @@ class SettingsForm:
         g.attach(token, 1, g._row, 1, 1)
         g._row += 1
         self._note(g, "Every call needs ?token=… or an X-Debrid-Token header. Delete http_token in config.json for a new one.")
-        self._heading(g, "Updates")
         if not IN_FLATPAK:
+            self._heading(g, "Updates")
             self._check(g, "check_updates", "Check for updates daily (GitHub releases)")
         self._heading(g, "Activity log")
         self._combo(g, "log_level", "Level", list(LOG_LEVELS))

@@ -19,11 +19,11 @@ Roadmap (decided 2026-10-13, from the "full-fledged Linux app" discussion; goal 
 1. **Universal deb** (v1.1.0): spec in `docs/superpowers/specs/2026-10-13-universal-deb-design.md`. Tray adapter (XApp
    where a host answers, Ayatana elsewhere, tray-less mode as last resort), Quit in the window and `Ctrl+Q`, Wayland hint
    on the clipboard watcher, both tray libraries as Recommends. Next: implementation plan.
-2. **App id and AppStream metainfo** (v1.1.1): spec in `docs/superpowers/specs/2026-10-13-app-id-metainfo-design.md`.
-   `io.github.xb00tt.debrid-applet` (already the D-Bus id) becomes the AppStream id and metainfo file name; nothing
-   upstream is renamed (the self-updater's `FILES` and per-user autostart entries would break); the Flatpak renames
-   the desktop file and icon at build time with `rename-desktop-file` / `rename-icon`. CI validates the metainfo and
-   refuses a tag without a `<release>` entry.
+2. **App id and AppStream metainfo** (v1.1.1, id corrected in v1.1.2 and again in v1.2.0): spec in
+   `docs/superpowers/specs/2026-10-13-app-id-metainfo-design.md`. The AppStream id and metainfo file name follow the
+   D-Bus id, now `io.github.xb00tt.debrid-applet`; nothing upstream is renamed (the self-updater's `FILES` and per-user
+   autostart entries would break); the Flatpak installs renamed copies of the desktop file, icon and metainfo from its
+   build commands. CI validates the metainfo; the test suite ties the newest release entry to `VERSION`.
 3. **Flatpak on Flathub** (v1.2.0): built and verified locally, spec in `docs/superpowers/specs/2026-10-13-flatpak-design.md`.
    Pending (maintainer): the Flathub PR (`flathub/flathub`, branch `new-pr`, manifest `packaging/io.github.xb00tt.debrid-applet.yml` with
    `commit:` added next to `tag:`, plus `python3-requirements.json` and the `shared-modules` submodule) and the
