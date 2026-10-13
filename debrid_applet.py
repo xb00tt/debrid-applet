@@ -109,6 +109,7 @@ EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "no
                 "player_command": "",  # custom Play target, e.g. "stremio {url}" or "kodi-send --action=PlayMedia({url})"
                 "start_tab": "All",  # tab shown when the window opens
                 "check_updates": True, "update_skip": "",  # daily GitHub release check; version the user chose to skip
+                "autostart_asked": False,  # flatpak: the Background portal was asked once for autostart
                 "service_full_names": False,  # All tab: "Torbox" instead of "TB" in the Service column
                 "config_version": 2,  # bumped when the layout changes; see migrate_config()
                 "notified_expiry": {}}  # service -> expiry date already warned about
@@ -280,6 +281,53 @@ def download_tool(have_aria2c):
 def toggle_hint(in_flatpak):
     cmd = f"{FLATPAK_RUN} --toggle" if in_flatpak else "debrid-applet --toggle"
     return f"Open it from the menu or {cmd}; Quit is in the ⋮ menu."
+
+
+def browser_fallback(player, custom, in_flatpak):
+    """Inside the sandbox with no reachable host player and no custom command, Play hands the stream to the browser."""
+    return in_flatpak and not player and not custom
+
+
+AUTOSTART_FALLBACK = ("Autostart is not available through your desktop's portal",
+                      f'Add "{FLATPAK_RUN}" to your startup applications.')
+
+
+def request_autostart(on_result):
+    """Ask the Background portal to start the app at login (flatpak only). on_result(True/False) runs on the main
+    loop; any D-Bus error counts as False. The Response arrives as a signal on the request handle, so the
+    subscription is made before the call and the handle token is chosen here."""
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        token = f"debrid{secrets.token_hex(4)}"
+        sender = bus.get_unique_name()[1:].replace(".", "_")
+        handle = f"/org/freedesktop/portal/desktop/request/{sender}/{token}"
+
+        def on_response(_c, _s, _p, _i, _sig, params):
+            code, results = params.unpack()
+            bus.signal_unsubscribe(sub)
+            on_result(code == 0 and bool(results.get("autostart")))
+        sub = bus.signal_subscribe("org.freedesktop.portal.Desktop", "org.freedesktop.portal.Request", "Response",
+                                   handle, None, Gio.DBusSignalFlags.NONE, on_response)
+        opts = {"handle_token": GLib.Variant("s", token),
+                "reason": GLib.Variant("s", "Keep the tray icon and the watch folder, RSS and auto-download running after login"),
+                "autostart": GLib.Variant("b", True),
+                "commandline": GLib.Variant("as", ["debrid-applet"])}
+        bus.call(
+            "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.Background",
+            "RequestBackground", GLib.Variant("(sa{sv})", ("", opts)), None, Gio.DBusCallFlags.NONE, 10000, None,
+            lambda b, res: _finish_call(b, res, on_result, sub))
+    except GLib.Error as e:
+        log_event("", f"Autostart portal: {e}", "error")
+        on_result(False)
+
+
+def _finish_call(bus, res, on_result, sub):
+    try:
+        bus.call_finish(res)
+    except GLib.Error as e:  # no backend (Cinnamon), or the portal refused outright: the Response never comes
+        bus.signal_unsubscribe(sub)
+        log_event("", f"Autostart portal: {e}", "error")
+        on_result(False)
 
 
 def tray_choice(xapp_state, have_xapp, have_ayatana, forced=""):
@@ -1931,7 +1979,10 @@ class ServiceTab(Gtk.Box):
             self.say(f"Sent {len(urls)} files to: {custom.split()[0]}")
             return
         if not self.app.player:
-            self.say("No media player found (mpv, vlc, celluloid, smplayer or totem)")
+            if browser_fallback(self.app.player, custom, IN_FLATPAK) and urls and open_url(urls[0]):
+                self.say("No host media player reachable, opened the first file in the browser")
+            else:
+                self.say("No media player found (mpv, vlc, celluloid, smplayer or totem)")
             return
         subprocess.Popen(host_cmd(playlist_cmd(self.app.player, urls)))
         self.say(f"Playing {len(urls)} files in {self.app.player}")
@@ -1946,12 +1997,15 @@ class ServiceTab(Gtk.Box):
             sub_url = pick_subtitle(name, links) if links else None
             try:
                 subprocess.Popen(host_cmd(custom_cmd(custom, url, sub_url)))
-                self.say(f"Sent to: {custom.split()[0]}")
+                self.say(f"Sent to: {custom.split()[0]}" + (" via the host" if IN_FLATPAK else ""))
             except (OSError, ValueError) as e:
                 self.say(f"Custom play command failed: {e}", error=True)
             return
         if not self.app.player:
-            self.say("No media player found (mpv, vlc, celluloid, smplayer or totem)")
+            if browser_fallback(self.app.player, custom, IN_FLATPAK) and open_url(url):
+                self.say("No host media player reachable, opened in the browser")
+            else:
+                self.say("No media player found (mpv, vlc, celluloid, smplayer or totem)")
             return
         if not is_http(url):
             return
@@ -2228,9 +2282,11 @@ class App:
 
         menu = Gtk.Menu()  # right-click on XApp, any click on an indicator; "Show / hide" first for hosts without left-click
         show_item = None
-        for label, cb in (("Show / hide window", self.toggle_window), ("Refresh", self.refresh),
-                          ("Settings…", self.open_settings), ("Check for updates…", lambda *_: self.check_updates(True)),
-                          ("About…", self.open_about), ("Quit", lambda *_: self.gapp.quit())):
+        entries = [("Show / hide window", self.toggle_window), ("Refresh", self.refresh), ("Settings…", self.open_settings)]
+        if not IN_FLATPAK:
+            entries.append(("Check for updates…", lambda *_: self.check_updates(True)))
+        entries += [("About…", self.open_about), ("Quit", lambda *_: self.gapp.quit())]
+        for label, cb in entries:
             item = Gtk.MenuItem(label=label)
             item.connect("activate", cb)
             menu.append(item)
@@ -2260,6 +2316,15 @@ class App:
         self.watcher.start()
         self.feeds.start()
         self.start_api()
+        if IN_FLATPAK and not self.cfg.get("autostart_asked"):
+            self.cfg["autostart_asked"] = True
+            save_config(self.cfg)
+
+            def autostart_result(ok):
+                log_event("", f"Autostart via the Background portal: {'granted' if ok else 'not available'}")
+                if not ok:
+                    notify(*AUTOSTART_FALLBACK)
+            request_autostart(autostart_result)
         GLib.timeout_add_seconds(60, lambda: self._check_updates_auto() and False)  # once, shortly after start
         GLib.timeout_add_seconds(86400, self._check_updates_auto)  # then daily while running
 
@@ -2389,7 +2454,7 @@ class App:
         self.window.hide()
         if self.tray.kind is not None and not self.tray.present() and not self._hide_hint_shown:
             self._hide_hint_shown = True
-            notify("Debrid Applet keeps running", "Open it from the menu or debrid-applet --toggle; Quit is in the ⋮ menu.")
+            notify("Debrid Applet keeps running", toggle_hint(IN_FLATPAK))
 
     def toggle_window(self, *_):
         if self.window.is_visible():
@@ -2515,6 +2580,10 @@ class App:
     def check_updates(self, manual=True):
         """Ask GitHub for the latest release. Manual checks always report in a dialog; automatic ones only notify
         about a newer version the user has not skipped, and log everything else at verbose level."""
+        if IN_FLATPAK:  # /app is read-only and Flathub ships the updates
+            if manual:
+                self.current_tab().say("Updates come from Flathub")
+            return
         if self._installed:  # already installed this session; only the restart is missing, no need to ask GitHub
             if manual and self._ask(f"Debrid Applet {self._installed} is installed. Restart now?", "Restart"):
                 self.restart()
@@ -2642,10 +2711,11 @@ class App:
 
     def open_about(self, *_):
         dlg = Gtk.AboutDialog(transient_for=self.window, modal=True, program_name="Debrid Applet", version=VERSION,
-                              comments="Tray control panel for Torbox, Real-Debrid and AllDebrid.",
+                              comments="Tray control panel for Torbox, Real-Debrid and AllDebrid." + (" Installed from Flathub." if IN_FLATPAK else ""),
                               website=HOMEPAGE, website_label="GitHub: xb00tt/debrid-applet",
                               license_type=Gtk.License.MIT_X11, authors=["xb00tt"], logo_icon_name=ICON_NAME)
-        dlg.add_button("Check for updates", 1)
+        if not IN_FLATPAK:
+            dlg.add_button("Check for updates", 1)
         dlg.connect("response", lambda d, r: (d.destroy(), self.check_updates(True)) if r == 1 else d.destroy())
         dlg.show()
 
@@ -2820,6 +2890,8 @@ class SettingsForm:
         g = self._page("Automation")
         self._heading(g, "Watch folder")
         self._entry(g, "watch_dir", "Folder", hint="~/Downloads/torrents")
+        if IN_FLATPAK:
+            self._note(g, f"Inside Downloads works as is; another folder needs: flatpak override --user --filesystem=<folder> {DBUS_ID}")
         self._combo(g, "watch_service", "Upload new .torrent files to", [(s, s) for s in SERVICES])
         self._heading(g, "RSS feeds")
         self._text(g, "feeds", "One per line:\nurl | regex | service")
@@ -2841,7 +2913,8 @@ class SettingsForm:
         g._row += 1
         self._note(g, "Every call needs ?token=… or an X-Debrid-Token header. Delete http_token in config.json for a new one.")
         self._heading(g, "Updates")
-        self._check(g, "check_updates", "Check for updates daily (GitHub releases)")
+        if not IN_FLATPAK:
+            self._check(g, "check_updates", "Check for updates daily (GitHub releases)")
         self._heading(g, "Activity log")
         self._combo(g, "log_level", "Level", list(LOG_LEVELS))
         self._spin(g, "log_max_kb", "Size limit (KB)", 50, 100000, 50)

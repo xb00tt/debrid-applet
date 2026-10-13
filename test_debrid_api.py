@@ -710,7 +710,8 @@ def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
                 "stop_seeding_when_done": False, "auto_download_videos_only": False, "delete_after_download": False,
                 "route_cached": False, "config_version": 2,
                 "feeds": "", "feed_interval_min": 15, "feed_seen": [], "player_command": "", "start_tab": "All",
-                "time_filter": "week", "check_updates": True, "update_skip": "", "service_full_names": False}
+                "time_filter": "week", "check_updates": True, "update_skip": "", "service_full_names": False,
+                "autostart_asked": False}
     assert debrid_applet.load_config() == defaults
     debrid_applet.save_config({"torbox_key": "a", "realdebrid_key": "b", "notify_done": False})
     assert debrid_applet.column_layout({}, "AllDebrid")["hidden"] == ["peers", "ratio"]
@@ -1760,6 +1761,15 @@ def test_host_launch_sites():
     assert 'shutil.which("aria2c")' not in src and "download_tool(bool(host_which(" in src
     assert "Notify.Notification.new(title, body, ICON_NAME)" in src and "set_default_icon_name(ICON_NAME)" in src
     assert "logo_icon_name=ICON_NAME" in src and "Ayatana.Indicator.new(APP_ID, ICON_NAME" in src
+
+
+def test_flatpak_degradation():
+    import debrid_applet as da
+    assert da.EMPTY_CONFIG["autostart_asked"] is False
+    assert da.browser_fallback(None, "", True) and not da.browser_fallback(None, "", False)
+    assert not da.browser_fallback("mpv", "", True) and not da.browser_fallback(None, "stremio {url}", True)
+    assert da.AUTOSTART_FALLBACK == ("Autostart is not available through your desktop's portal",
+                                     'Add "flatpak run io.github.xb00tt.debrid_applet" to your startup applications.')
 
 
 if __name__ == "__main__":
