@@ -4,10 +4,16 @@ Everything the applet does, in detail. For installing and the basics see the [RE
 
 ## Tray icon
 
-- Left-click: show / hide the window. Right-click: Refresh, Settings…, About…, Quit. About… (also in the toolbar ⋮
-  menu) shows the version, licence and the project page.
+- Left-click: show / hide the window. Right-click: Show / hide window, Refresh, Settings…, Check for updates…, About…, Quit.
+  About… (also in the toolbar ⋮ menu) shows the version, licence and the project page.
 - Label next to the icon (e.g. `32↓`) is how many items across all services are still downloading (what the Active filter shows); hover for details.
 - Only one instance runs; launching the applet again just raises the window.
+- What each desktop shows. The applet uses the XApp status icon where a host answers (Cinnamon; XFCE and MATE with the
+  xapp status plugin) and a StatusNotifier indicator elsewhere (KDE Plasma, GNOME with the "AppIndicator and
+  KStatusNotifierItem Support" extension, any desktop running xapp-sn-watcher). Indicators open the menu on any click,
+  middle-click toggles the window, and some hosts (KDE) do not show the label. Without any host the window opens at
+  start, closing it hides it (everything keeps running), a notification says so once, and Quit is in the ⋮ menu or
+  `Ctrl+Q`. `DEBRID_APPLET_TRAY=xapp|ayatana|none` in the environment forces a backend.
 
 ## Adding things
 
@@ -51,7 +57,7 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 
 ## Keyboard shortcuts
 
-`Delete` · `Ctrl+A` tick all / none · `Ctrl+C` copy links · `Ctrl+F` filter · `Ctrl+R` refresh · `Ctrl+L` activity log · `Esc` clear filter, then hide window
+`Delete` · `Ctrl+A` tick all / none · `Ctrl+C` copy links · `Ctrl+F` filter · `Ctrl+R` refresh · `Ctrl+L` activity log · `Ctrl+Q` quit · `Esc` clear filter, then hide window
 
 ## Power features
 
@@ -164,7 +170,9 @@ Notifications, clipboard watcher and remembered filter are on by default; everyt
   If the keys vanished, `~/.config/debrid-applet/config.json.bak` is the last version that still had them.
 - **Two tray icons**: one is a leftover from an instance that was killed mid-poll; it disappears on the next restart
   of the applet, or restart Cinnamon (Ctrl+Alt+Esc on Mint).
-- **Window gone**: left-click the tray icon, run the script again, or `--toggle`.
+- **No tray icon**: the desktop has no status-icon host. GNOME: install the "AppIndicator and KStatusNotifierItem
+  Support" extension and restart the applet. Otherwise the window is shown at start and Quit is in the ⋮ menu.
+- **Window gone**: left-click (or middle-click an indicator) the tray icon, run the script again, or `--toggle`.
 - **Something failed silently**: `Ctrl+L` opens the activity log; the process's own stderr lands in the session log
   (`journalctl --user -b` on systemd sessions, `~/.xsession-errors` on others).
 

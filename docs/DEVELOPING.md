@@ -17,7 +17,9 @@ mangles `[` and `|` on some keyboard layouts, so use the clipboard or bracket-fr
 - `debrid_api.py`: the three service clients behind one interface, plus helpers (`magnet_hash`, `human_size`).
 - `debrid_local_api.py`: the loopback HTTP API.
 - `debrid_update.py`: update check and self-update (GitHub releases API, verified download, apt / per-user install).
-- `debrid_applet.py`: everything GTK: tabs, footer, settings form, watchers, notifications, command line.
+- `debrid_applet.py`: everything GTK: tabs, footer, settings form, watchers, notifications, command line, and the
+  `Tray` adapter (XApp or Ayatana, both optional imports; `tray_choice()` is the pure decision, `DEBRID_APPLET_TRAY`
+  forces a backend for testing: Cinnamon's xapp-sn-watcher shows the Ayatana path on one box).
 - `test_debrid_api.py`: the offline suite; run it directly, no test runner needed.
 - `install.sh`, `debrid-applet.desktop`, `debrid-applet.svg`: per-user install.
 - `packaging/build-deb.sh`: builds the Debian package the release workflow publishes.

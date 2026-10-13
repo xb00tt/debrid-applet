@@ -1,6 +1,6 @@
 # Debrid Applet
 
-A tray app for Linux Mint that puts your **Torbox**, **Real-Debrid** and **AllDebrid** accounts in one window.
+A tray app for Linux that puts your **Torbox**, **Real-Debrid** and **AllDebrid** accounts in one window.
 See what's downloading, add magnets and torrents, play or download the results, and let it watch folders and
 feeds for you.
 
@@ -16,7 +16,12 @@ sudo apt install ./debrid-applet_1.0.9_all.deb
 
 It starts with your session from now on. To start it right away, look for **Debrid Applet** in the menu.
 
+Works on any Debian-based desktop: the tray icon shows on Cinnamon, KDE, XFCE and MATE, and on GNOME with the
+"AppIndicator and KStatusNotifierItem Support" extension; without a tray the window simply opens at start.
+
 Prefer running from source? Clone the repo and run `./install.sh` (`sudo apt install python3-requests python3-defusedxml` first).
+On Fedora: `sudo dnf install python3-gobject gtk3 libnotify python3-requests python3-defusedxml`; on Arch:
+`sudo pacman -S python-gobject gtk3 libnotify python-requests python-defusedxml`; then `./install.sh` from the release tarball.
 
 ## First run
 
@@ -52,6 +57,9 @@ Everything else, from watch folders and RSS feeds to the local API and keyboard 
 
 Open the activity log (clock icon in the toolbar) to see what the applet did and what the services answered.
 More in the manual's [troubleshooting section](docs/MANUAL.md#troubleshooting).
+
+No tray icon? Your desktop has no status-icon host (GNOME without the AppIndicator extension, some Wayland sessions): the
+window opens at start instead, Quit lives in its ⋮ menu, and the manual's [tray section](docs/MANUAL.md#tray-icon) says what each desktop shows.
 
 ## License
 
