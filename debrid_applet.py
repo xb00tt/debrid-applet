@@ -31,8 +31,17 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 gi.require_version("Pango", "1.0")
 gi.require_version("Notify", "0.7")
-gi.require_version("XApp", "1.0")
-from gi.repository import Gdk, Gio, GLib, Gtk, Notify, Pango, XApp  # noqa: E402
+from gi.repository import Gdk, Gio, GLib, Gtk, Notify, Pango  # noqa: E402
+try:  # status icon hosts are optional: Cinnamon / XFCE / MATE answer XApp, StatusNotifier desktops answer Ayatana
+    gi.require_version("XApp", "1.0")
+    from gi.repository import XApp  # noqa: E402
+except (ValueError, ImportError):
+    XApp = None
+try:
+    gi.require_version("AyatanaAppIndicator3", "0.1")
+    from gi.repository import AyatanaAppIndicator3 as Ayatana  # noqa: E402
+except (ValueError, ImportError):
+    Ayatana = None
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 from debrid_api import (DONE, DOWNLOADING, ERROR, EXPIRED, INVALID_KEY, PROCESSING, QUEUED, SEEDING, STALLED,  # noqa: E402
@@ -224,6 +233,34 @@ def add_one(client, item):
 
 def find_player():
     return next((p for p in PLAYERS if shutil.which(p)), None)
+
+
+TRAY_KINDS = ("xapp", "ayatana", "xapp-fallback", "none")
+
+
+def tray_choice(xapp_state, have_xapp, have_ayatana, forced=""):
+    """Which status icon to keep. xapp_state: XApp's state nick once a host has answered ('native', 'fallback',
+    'no-support') or None when XApp is not installed. Ayatana wherever XApp is not native; XApp's own XEmbed
+    fallback only when Ayatana is missing too (visible on XEmbed trays under X11, nowhere else). forced: the
+    DEBRID_APPLET_TRAY knob, honoured when that backend exists, else none; other words are ignored."""
+    if forced == "none":
+        return "none"
+    if forced == "ayatana":
+        return "ayatana" if have_ayatana else "none"
+    if forced == "xapp":
+        return "xapp" if have_xapp else "none"
+    if have_xapp and xapp_state == "native":
+        return "xapp"
+    if have_ayatana:
+        return "ayatana"
+    if have_xapp and xapp_state == "fallback":
+        return "xapp-fallback"
+    return "none"
+
+
+def is_wayland(display_type_name):
+    """type(Gdk.Display.get_default()).__name__ is 'GdkWaylandDisplay' there, 'X11Display' under X11."""
+    return "Wayland" in display_type_name
 
 
 def usable_links(links):

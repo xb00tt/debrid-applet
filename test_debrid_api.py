@@ -1585,6 +1585,22 @@ def test_add_label():
     assert len(debrid_applet.add_label("x" * 500)) == 60
 
 
+def test_tray_choice_and_wayland():
+    import debrid_applet
+    c = debrid_applet.tray_choice
+    assert c("native", True, True) == "xapp" and c("native", True, False) == "xapp"
+    assert c("fallback", True, True) == "ayatana" and c("no-support", True, True) == "ayatana"
+    assert c(None, False, True) == "ayatana"  # no XApp installed at all
+    assert c("fallback", True, False) == "xapp-fallback"  # XEmbed: visible on KDE / XFCE / MATE under X11, nowhere else
+    assert c("no-support", True, False) == "none" and c(None, False, False) == "none"
+    # the DEBRID_APPLET_TRAY knob: forces a backend that exists, falls to none when it does not, ignores typos
+    assert c("native", True, True, forced="ayatana") == "ayatana" and c("native", True, True, forced="none") == "none"
+    assert c("fallback", True, True, forced="xapp") == "xapp"
+    assert c("native", True, False, forced="ayatana") == "none" and c(None, False, True, forced="xapp") == "none"
+    assert c("fallback", True, True, forced="ayatna") == "ayatana" and c("native", True, True, forced="") == "xapp"
+    assert debrid_applet.is_wayland("GdkWaylandDisplay") and not debrid_applet.is_wayland("X11Display")
+
+
 if __name__ == "__main__":
     import sys
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
