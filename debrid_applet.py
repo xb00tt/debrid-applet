@@ -1031,7 +1031,8 @@ class ServiceTab(Gtk.Box):
         more.set_relief(Gtk.ReliefStyle.NONE)
         more_menu = Gtk.Menu()
         for label, cb in (("Export magnets…", self.on_export), ("Import magnets or links…", self.on_import),
-                          ("Copy all magnets", self.on_copy_all_magnets), ("About…", app.open_about)):
+                          ("Copy all magnets", self.on_copy_all_magnets), ("About…", app.open_about),
+                          ("Quit (Ctrl+Q)", app.gapp.quit)):
             item = Gtk.MenuItem(label=label)
             item.connect("activate", lambda _i, cb=cb: cb())
             more_menu.append(item)
@@ -2287,6 +2288,8 @@ class App:
             self.refresh()
         elif ctrl and key == Gdk.KEY_l:
             self.open_log()
+        elif ctrl and key == Gdk.KEY_q:
+            self.gapp.quit()
         elif self.window.get_focus() is tab.view and key == Gdk.KEY_Delete:
             tab.on_delete(None)
         elif self.window.get_focus() is tab.view and ctrl and key == Gdk.KEY_a:
