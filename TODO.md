@@ -31,7 +31,9 @@ Roadmap (decided 2026-10-13, from the "full-fledged Linux app" discussion; goal 
    Background portal; self-updater off (`install_mode()` learns "flatpak" from `/.flatpak-info`). Tray is Ayatana only
    inside the sandbox, so Cinnamon loses the left-click toggle in the Flatpak build; the deb keeps it. Rejected: GNOME
    runtime (1.1 GB, six-monthly branches, this box carries three of them) and bundling mpv/aria2 (100+ MB, kills the
-   custom play command).
+   custom play command). Manifest keys: `rename-desktop-file: debrid-applet.desktop`, `rename-icon: debrid-applet`;
+   the metainfo is already named by id and within Flathub's quality guidelines (summary length, screenshot size are
+   asserted by `test_metainfo`).
 4. **Tarball for other distros**: already works via `install.sh`; add one dependency line per distro (Fedora, Arch,
    openSUSE) to the README. RPM spec / AUR PKGBUILD only if someone asks; Flatpak covers those distros.
 5. **Daemon + frontend split**: deferred, no user has asked and Flatpak cannot ship a systemd user unit anyway. If it

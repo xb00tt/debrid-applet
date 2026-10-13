@@ -21,10 +21,11 @@
   <screenshots>
     <screenshot type="default">
       <caption>The All tab with items from every service</caption>
-      <image>https://raw.githubusercontent.com/xb00tt/debrid-applet/v1.1.1/docs/screenshot.png</image>
+      <image>https://raw.githubusercontent.com/xb00tt/debrid-applet/v1.1.2/docs/screenshot.png</image>
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.1.2" date="2026-10-13"><description><p>App id is io.github.xb00tt.debrid_applet, the form Flathub maps to the repository; metainfo within Flathub's quality guidelines; install.sh never stops on store data.</p></description></release>
     <release version="1.1.1" date="2026-10-13"><description><p>AppStream metainfo for app stores.</p></description></release>
     <release version="1.1.0" date="2026-10-13"><description><p>Runs on any Debian-based desktop: tray icon on Cinnamon, KDE, XFCE, MATE and GNOME, plain window elsewhere.</p></description></release>
     <release version="1.0.0" date="2026-10-11"><description><p>First release.</p></description></release>
