@@ -1715,6 +1715,42 @@ def test_metainfo():
     assert not re.search(r"<developer_name>", open(METAINFO).read())  # deprecated since AppStream 1.0
 
 
+def test_flatpak_helpers():
+    import subprocess
+    import debrid_applet as da
+    import debrid_update as du
+    assert du.install_mode("/app/share/debrid-applet", flatpak_info="/nonexistent") == "user"
+    assert du.install_mode("/app/share/debrid-applet", flatpak_info="/etc/hostname") == "flatpak"  # any existing file stands in
+    assert du.install_mode("/usr/share/debrid-applet", flatpak_info="/etc/hostname") == "flatpak"  # the sandbox wins over the path
+    assert da.icon_name(False) == da.APP_ID and da.icon_name(True) == da.DBUS_ID  # the host resolves exported icons by app id
+    assert da.host_cmd(["mpv", "--fs", "u"], in_flatpak=False) == ["mpv", "--fs", "u"]
+    assert da.host_cmd(["mpv", "--fs", "u"], in_flatpak=True) == ["flatpak-spawn", "--host", "mpv", "--fs", "u"]
+    assert da.host_which("sh", in_flatpak=False) == subprocess.run(["which", "sh"], capture_output=True, text=True).stdout.strip()
+    calls = []
+
+    def fake_run(argv, **kw):  # the host answers
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="/usr/bin/mpv\n", stderr="")
+    da._host_which_cache.clear()
+    assert da.host_which("mpv", in_flatpak=True, run=fake_run) == "/usr/bin/mpv"
+    assert da.host_which("mpv", in_flatpak=True, run=fake_run) == "/usr/bin/mpv" and len(calls) == 1  # cached
+    assert calls[0] == ["flatpak-spawn", "--host", "which", "mpv"]
+
+    def refused(argv, **kw):  # no exception granted: flatpak-spawn exits 1 (portal call failed)
+        return subprocess.CompletedProcess(argv, 1, stdout="", stderr="Portal call failed")
+    da._host_which_cache.clear()
+    assert da.host_which("mpv", in_flatpak=True, run=refused) is None
+
+    def exploding(argv, **kw):
+        raise subprocess.TimeoutExpired(argv, 5)
+    da._host_which_cache.clear()
+    assert da.host_which("mpv", in_flatpak=True, run=exploding) is None
+    da._host_which_cache.clear()
+    assert da.download_tool(True) == "aria2c" and da.download_tool(False) == "wget"
+    assert "flatpak run io.github.xb00tt.debrid_applet --toggle" in da.toggle_hint(True)
+    assert "debrid-applet --toggle" in da.toggle_hint(False) and "flatpak" not in da.toggle_hint(False)
+
+
 if __name__ == "__main__":
     import sys
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]

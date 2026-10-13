@@ -52,6 +52,17 @@ from debrid_update import deb_command, download, install_mode, install_user, lat
 VERSION = "1.1.2"
 APP_ID = "debrid-applet"  # WM_CLASS, icon name and .desktop basename all match
 DBUS_ID = "io.github.xb00tt.debrid_applet"  # the app id: D-Bus name (single instance), AppStream id, Flatpak id
+IN_FLATPAK = install_mode(HERE) == "flatpak"
+FLATPAK_RUN = f"flatpak run {DBUS_ID}"
+
+
+def icon_name(in_flatpak):
+    """Inside the sandbox the panel and the notification daemon resolve icons on the host, where Flatpak exports
+    /app/share/icons/hicolor/*/apps/<app id>.*; outside, the theme (or HERE) has debrid-applet.svg."""
+    return DBUS_ID if in_flatpak else APP_ID
+
+
+ICON_NAME = icon_name(IN_FLATPAK)
 HOMEPAGE = "https://github.com/xb00tt/debrid-applet"
 PLAYERS = ("mpv", "vlc", "celluloid", "smplayer", "totem")
 SUB_FLAG = {"mpv": "--sub-file={}", "celluloid": "--mpv-sub-file={}", "smplayer": "-sub {}", "vlc": "--sub-file={}"}
@@ -232,7 +243,43 @@ def add_one(client, item):
 
 
 def find_player():
-    return next((p for p in PLAYERS if shutil.which(p)), None)
+    return next((p for p in PLAYERS if host_which(p)), None)
+
+
+_host_which_cache = {}
+
+
+def host_cmd(argv, in_flatpak=None):
+    """argv for a program that lives on the host: unchanged outside the sandbox, flatpak-spawn --host inside
+    (needs --talk-name=org.freedesktop.Flatpak; without it the spawn exits non-zero and the callers degrade)."""
+    if IN_FLATPAK if in_flatpak is None else in_flatpak:
+        return ["flatpak-spawn", "--host", *argv]
+    return list(argv)
+
+
+def host_which(name, in_flatpak=None, run=subprocess.run):
+    """Path of name on the host, or None. Inside the sandbox this asks the host's `which` through flatpak-spawn with a
+    5 s cap; a refused portal call, a timeout or a missing flatpak-spawn all mean None. Cached per name."""
+    sandboxed = IN_FLATPAK if in_flatpak is None else in_flatpak
+    if not sandboxed:
+        return shutil.which(name)
+    if name not in _host_which_cache:
+        try:
+            r = run(host_cmd(["which", name], in_flatpak=True), capture_output=True, text=True, timeout=5)
+            _host_which_cache[name] = r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+        except (OSError, subprocess.SubprocessError):
+            _host_which_cache[name] = None
+    return _host_which_cache[name]
+
+
+def download_tool(have_aria2c):
+    """aria2c on the host when reachable, else wget: the freedesktop runtime ships wget, so the sandbox always has one."""
+    return "aria2c" if have_aria2c else "wget"
+
+
+def toggle_hint(in_flatpak):
+    cmd = f"{FLATPAK_RUN} --toggle" if in_flatpak else "debrid-applet --toggle"
+    return f"Open it from the menu or {cmd}; Quit is in the ⋮ menu."
 
 
 def tray_choice(xapp_state, have_xapp, have_ayatana, forced=""):

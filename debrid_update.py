@@ -109,8 +109,11 @@ def verify_signature(path, sig_path, version, keys=SIGNING_KEYS, tool="ssh-keyge
         raise ApiError("Release is not signed by the project key; not installing")
 
 
-def install_mode(here):
-    """'deb' (the package, under /usr), 'git' (a checkout: update with git pull) or 'user' (an install.sh copy)."""
+def install_mode(here, flatpak_info="/.flatpak-info"):
+    """'flatpak' (inside a sandbox: updates come from Flathub), 'deb' (the package, under /usr), 'git' (a checkout:
+    update with git pull) or 'user' (an install.sh copy)."""
+    if os.path.exists(flatpak_info):
+        return "flatpak"
     if here.startswith("/usr/"):
         return "deb"
     if os.path.exists(os.path.join(here, ".git")):  # a directory, or a file in a git worktree
