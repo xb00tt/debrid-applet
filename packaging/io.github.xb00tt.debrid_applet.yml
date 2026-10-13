@@ -1,0 +1,50 @@
+app-id: io.github.xb00tt.debrid_applet
+runtime: org.freedesktop.Platform
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+command: debrid-applet
+finish-args:
+  - --share=network                               # the three services and the loopback API
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --talk-name=org.kde.StatusNotifierWatcher     # tray icon
+  - --talk-name=org.freedesktop.Notifications     # libnotify
+  - --talk-name=org.freedesktop.Flatpak           # mpv/vlc/aria2c on the host; the app degrades without it
+  - --filesystem=xdg-download                     # default download folder, watch folders inside it
+  - --filesystem=xdg-config/debrid-applet:create  # config.json, shared with a deb install
+  - --filesystem=xdg-data/debrid-applet:create    # activity and download logs
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /share/gir-1.0
+  - '*.la'
+modules:
+  - shared-modules/libayatana-appindicator/libayatana-appindicator-gtk3.json
+  - name: pygobject
+    buildsystem: meson
+    config-opts:
+      - -Dpycairo=disabled
+      - -Dtests=false
+    sources:
+      - type: archive
+        url: https://download.gnome.org/sources/pygobject/3.58/pygobject-3.58.1.tar.gz
+        sha256: 4c80598ade17fbaa7798e01a25d0bf29ce109740786026a074c5c62bb3e79d23
+  - python3-requirements.json
+  - name: debrid-applet
+    buildsystem: simple
+    build-commands:
+      - install -Dm644 -t /app/share/debrid-applet debrid_api.py debrid_local_api.py debrid_update.py debrid_applet.py debrid-applet.svg
+      - install -Dm644 debrid-applet.svg /app/share/icons/hicolor/scalable/apps/io.github.xb00tt.debrid_applet.svg
+      - mkdir -p /app/share/applications /app/share/metainfo /app/bin
+      - sed -e 's|@EXEC@|debrid-applet|' -e 's|^Icon=.*|Icon=io.github.xb00tt.debrid_applet|' debrid-applet.desktop > /app/share/applications/io.github.xb00tt.debrid_applet.desktop
+      - sed 's|debrid-applet.desktop|io.github.xb00tt.debrid_applet.desktop|' io.github.xb00tt.debrid_applet.metainfo.xml > /app/share/metainfo/io.github.xb00tt.debrid_applet.metainfo.xml
+      - printf '#!/bin/sh\nexec python3 /app/share/debrid-applet/debrid_applet.py "$@"\n' > /app/bin/debrid-applet
+      - chmod 755 /app/bin/debrid-applet
+    sources:
+      - type: git
+        url: https://github.com/xb00tt/debrid-applet.git
+        tag: v1.1.2
+        x-checker-data:
+          type: git
+          tag-pattern: ^v([\d.]+)$

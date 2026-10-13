@@ -1772,6 +1772,30 @@ def test_flatpak_degradation():
                                      'Add "flatpak run io.github.xb00tt.debrid_applet" to your startup applications.')
 
 
+def test_flatpak_manifest():
+    import yaml
+    import debrid_applet as da
+    m = yaml.safe_load(open("packaging/io.github.xb00tt.debrid_applet.yml"))
+    assert m["app-id"] == da.DBUS_ID and m["command"] == "debrid-applet"
+    assert m["runtime"] == "org.freedesktop.Platform" and m["sdk"] == "org.freedesktop.Sdk"
+    args = m["finish-args"]
+    assert "--filesystem=home" not in args and "--filesystem=host" not in args
+    assert not any(a.endswith(".*") for a in args), "wildcard talk-names are never granted"
+    for a in ("--share=network", "--share=ipc", "--socket=wayland", "--socket=fallback-x11",
+              "--talk-name=org.kde.StatusNotifierWatcher", "--talk-name=org.freedesktop.Notifications",
+              "--talk-name=org.freedesktop.Flatpak", "--filesystem=xdg-download",
+              "--filesystem=xdg-config/debrid-applet:create", "--filesystem=xdg-data/debrid-applet:create"):
+        assert a in args, a
+    assert "--socket=x11" not in args
+    app = next(mod for mod in m["modules"] if isinstance(mod, dict) and mod["name"] == "debrid-applet")
+    src = app["sources"][0]
+    assert src["type"] == "git" and src["tag"] == f"v{da.VERSION}"
+    assert any(isinstance(mod, str) and mod.endswith("python3-requirements.json") for mod in m["modules"])
+    assert os.path.exists("packaging/python3-requirements.json")
+    cmds = "\n".join(app["build-commands"])
+    assert f"Icon={da.DBUS_ID}" in cmds and f"/app/share/metainfo/{da.DBUS_ID}.metainfo.xml" in cmds
+
+
 if __name__ == "__main__":
     import sys
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]

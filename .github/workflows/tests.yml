@@ -14,7 +14,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q python3-gi gir1.2-gtk-3.0 gir1.2-notify-0.7 gir1.2-xapp-1.0 python3-requests python3-defusedxml appstream desktop-file-utils
+          sudo apt-get install -y -q python3-gi gir1.2-gtk-3.0 gir1.2-notify-0.7 gir1.2-xapp-1.0 python3-requests python3-defusedxml python3-yaml appstream desktop-file-utils
       - name: Validate the AppStream metainfo and the desktop file
         run: |
           appstreamcli validate --no-net io.github.xb00tt.debrid_applet.metainfo.xml
