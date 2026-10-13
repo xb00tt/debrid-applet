@@ -27,10 +27,11 @@ def ok(data):
 
 
 class FakeResp:
-    def __init__(self, status=200, body=None):
+    def __init__(self, status=200, body=None, headers=None):
         self.status_code = status
         self._body = body
         self.text = "" if body is None else json.dumps(body)
+        self.headers = headers or {}
 
     def json(self):
         if self._body is None:
@@ -105,15 +106,86 @@ def test_rd_torrents_paginates():
 
 
 def test_rd_active_only():
-    s = FakeSession(FakeResp(200, [{"id": "A", "filename": "a", "status": "downloading", "progress": 5}]))
-    out = RealDebrid("t", s).torrents(active_only=True)
-    assert len(out) == 1 and s.calls[0][2]["params"] == {"limit": 5000, "page": 1, "filter": "active"}
+    s = FakeSession(FakeResp(200, [{"id": "A", "filename": "a", "status": "downloading", "progress": 5}], {"X-Total-Count": "3"}))
+    rd = RealDebrid("t", s)
+    out = rd.torrents(active_only=True)
+    assert len(out) == 1 and s.calls[0][2]["params"] == {"filter": "active", "limit": 5000}  # the filter only works without page
+    assert len(s.calls) == 1 and rd.total == 3
+    assert not rd.stale([{"id": "A"}, {"id": "B"}, {"id": "C"}]) and rd.stale([{"id": "A"}, {"id": "B"}])  # one deleted elsewhere
+    assert not RealDebrid("t", FakeSession()).stale([])  # no answer seen yet: nothing to compare
+
+
+def test_tb_light_poll():
+    item = {"id": 7, "name": "x", "download_state": "downloading", "progress": 0.5, "active": True}
+    s = FakeSession(ok(item), FakeResp(404, {"success": True, "error": "ITEM_NOT_FOUND", "detail": "No torrents found for this user."}),
+                    ok({**item, "id": 9, "download_state": "completed", "download_finished": True, "download_present": True, "active": False}))
+    tb = Torbox("t", s)
+    out = tb.torrents(active_only=True, ids=[("7", "torrent"), ("8", "torrent"), ("9", "webdl")])
+    assert [(t["id"], t["state"], t["done"]) for t in out] == [("7", "Downloading", False), ("9", "Done (web)", True)]  # 8: deleted elsewhere, left out
+    assert [c[1] for c in s.calls] == [TB + "/torrents/mylist", TB + "/torrents/mylist", TB + "/webdl/mylist"]
+    assert s.calls[0][2]["params"] == {"id": 7, "bypass_cache": "true"} and s.calls[2][2]["params"] == {"id": 9, "bypass_cache": "true"}
+    assert tb.stale([{"id": "7"}, {"id": "9"}]) and len(s.calls) == 3  # the missing 8 counts as changed elsewhere, no probe needed
+    assert not Torbox("t", FakeSession(ok([{"id": 7}]), ok([]))).stale([{"id": "7"}])  # and only once
+    s = FakeSession()
+    assert Torbox("t", s).torrents(active_only=True, ids=[(str(i), "torrent") for i in range(Torbox.LIGHT_MAX + 1)]) is None and s.calls == []  # too many: the whole list instead
+    s = FakeSession(ok([{"id": 5}]), ok([]), ok([{"id": 5}]), ok([{"id": 3}]), ok({"id": 5}), ok([]))
+    tb = Torbox("t", s)
+    assert not tb.stale([{"id": "5"}, {"id": "4"}]) and s.calls[0][2]["params"] == {"bypass_cache": "true", "limit": 1}
+    assert tb.stale([{"id": "5"}]) and len(s.calls) == 4  # a web download added elsewhere
+    assert not tb.stale([{"id": "4"}])  # an object where a list was expected: not a verdict
+
+
+def test_poll_one():
+    import debrid_applet as da
+    from types import SimpleNamespace as NS
+
+    class Client:
+        LIGHT_COMPLETE = False
+        def __init__(self, active=None, stale_=False, fail=False):
+            self.active, self.stale_, self.fail, self.calls = active, stale_, fail, []
+        def torrents(self, active_only=False, ids=()):
+            self.calls.append(("torrents", active_only, list(ids)))
+            if active_only:
+                return self.active
+            if self.fail:
+                raise ApiError("boom")
+            return [{"id": "1", "done": True, "state": "Done", "kind": "torrent"}, {"id": "2", "done": False, "state": "Downloading", "kind": "torrent"}]
+        def account(self):
+            self.calls.append(("account",)); return {"plan": "p"}
+        def stale(self, cached):
+            self.calls.append(("stale", len(cached))); return self.stale_
+    cached = [{"id": "1", "done": True, "state": "Done", "kind": "torrent"}, {"id": "2", "done": False, "state": "Downloading", "kind": "torrent"},
+              {"id": "3", "done": False, "state": "Stalled", "kind": "torrent"}, {"id": "4", "done": False, "state": "Error: dead", "kind": "torrent"}]
+    def tab(client, torrents=cached, account={"plan": "old"}, last_full=1000):
+        return NS(name="S", client=client, torrents=torrents, _account=account, _last_full=last_full)
+    fresh = [{"id": "2", "done": False, "state": "Downloading", "kind": "torrent", "progress": 50}]
+    c = Client(active=fresh); t = tab(c)
+    assert da.poll_one(t, 1030, False, True) == ({"plan": "old"}, [cached[0], fresh[0], cached[2], cached[3]]) and t._last_full == 1000  # light: merged, cache kept
+    assert c.calls == [("torrents", True, [("2", "torrent"), ("3", "torrent")]), ("stale", 4)]  # unfinished items that can still move
+    c = Client(active=[]); t = tab(c)  # 2 left the active set: everything, and the list's age restarts
+    assert da.poll_one(t, 1030, False, True)[1][1]["id"] == "2" and c.calls[-2:] == [("account",), ("torrents", False, [])] and t._last_full == 1030
+    c = Client(active=fresh, stale_=True); t = tab(c)  # changed elsewhere: everything
+    assert da.poll_one(t, 1030, False, True)[0] == {"plan": "p"} and ("account",) in c.calls
+    c = Client(active=None); t = tab(c)  # no light query (AllDebrid, Torbox with too many active items): everything, no stale probe
+    assert da.poll_one(t, 1030, False, True)[0] == {"plan": "p"} and not [x for x in c.calls if x[0] == "stale"]
+    c = Client(active=fresh); c.LIGHT_COMPLETE = True; t = tab(c)  # a complete light poll: no minute refetch on the fast cadence
+    assert da.poll_one(t, 1000 + da.POLL_SLOW, True, True)[0] == {"plan": "old"} and RealDebrid("t", FakeSession()).LIGHT_COMPLETE is True
+    assert Torbox("t", FakeSession()).LIGHT_COMPLETE is False and AllDebrid("t", FakeSession()).LIGHT_COMPLETE is False
+    assert da.can_change({"done": False, "state": "Stalled"}) and da.can_change({"done": False, "state": "Done (web)"})
+    assert not da.can_change({"done": True, "state": "Done"}) and not da.can_change({"done": False, "state": "Expired"}) and not da.can_change({"done": False, "state": "Error: dead"})
+    for fast, scheduled, age in ((False, False, 30), (True, False, 30), (False, True, da.POLL_FULL), (True, True, da.POLL_SLOW)):
+        c = Client(active=fresh); t = tab(c, last_full=1000)
+        assert da.poll_one(t, 1000 + age, fast, scheduled)[0] == {"plan": "p"} and c.calls[0] == ("account",), (fast, scheduled, age)  # user asked, or too old
+    c = Client(active=fresh, stale_=True, fail=True); t = tab(c)  # a failing full poll leaves the cache and its age alone
+    try:
+        da.poll_one(t, 1030, False, True); assert False
+    except ApiError:
+        assert t.torrents is cached and t._last_full == 1000
 
 
 def test_ad_active_only():
     s = FakeSession(ad_ok({"magnets": [{"id": 1, "filename": "a", "statusCode": 1, "status": "Downloading", "size": 10}]}))
-    out = AllDebrid("t", s).torrents(active_only=True)
-    assert len(out) == 1 and s.calls[0][2]["data"] == {"status": "active"}
+    assert AllDebrid("t", s).torrents(active_only=True) is None and s.calls == []  # the API ignores its status filter: no light poll
 
 
 def test_poll_tabs_runs_services_in_parallel():
@@ -138,6 +210,17 @@ def test_poll_tabs_runs_services_in_parallel():
     assert results[0][1:] == ({"plan": "a"}, ["a"], None) and results[1][1:] == ({"plan": "b"}, ["b"], None)
     assert results[2][1:] == (None, None, "Invalid API key") and results[3][1:] == (None, None, "KeyError: 'id'")
     assert da.poll_tabs([], fetch_one) == []
+
+
+def test_poll_kind():
+    import debrid_applet as da
+    assert da.poll_kind(False, 0, False, True) == "full"  # nothing cached yet
+    assert da.poll_kind(True, 30, False, False) == "full"  # the user asked: always everything
+    assert da.poll_kind(True, 30, False, True) == "light"  # idle timer: active items only, merged into the cache
+    assert da.poll_kind(True, da.POLL_FULL, False, True) == "full"  # the cached list is due for a refetch
+    assert da.poll_kind(True, 30, True, False) == "full"  # the user asked while something downloads: still everything
+    assert da.poll_kind(True, 30, True, True) == "light" and da.poll_kind(True, da.POLL_SLOW, True, True) == "full"  # fast cadence: light within the minute
+    assert not AllDebrid("t", FakeSession()).stale([]) and da.MergedClient(lambda: []).torrents(active_only=True, ids=[("1", "torrent")]) == []
 
 
 def test_merge_active():
@@ -975,6 +1058,10 @@ def test_merged_client():
     rows = m.torrents()
     assert [r["id"] for r in rows] == ["Torbox|7", "Real-Debrid|A"] and rows[0]["name"] == "x"
     assert [r["service"] for r in rows] == ["Torbox", "Real-Debrid"]
+    again = m.torrents()
+    assert again[0] is rows[0] and again[1] is rows[1]  # unchanged source dicts keep their copies: no 12k new dicts a poll
+    tb.torrents = [dict(tb.torrents[0])]  # a fresh dict for the same item: that copy is rebuilt, the other kept
+    assert m.torrents()[0] is not rows[0] and m.torrents()[1] is rows[1]
     assert [r["id"] for r in m.torrents(active_only=True)] == ["Torbox|7"]
     m.delete("Real-Debrid|A", "torrent"); assert rd.calls == [("delete", "A", "torrent")]
     assert m.links("Torbox|7", "torrent") == [{"name": "Torbox-7", "url": "u", "size": 1}]

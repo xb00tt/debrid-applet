@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tray control panel for Torbox, Real-Debrid and AllDebrid."""
 import collections
+import ctypes
 import functools
 import ipaddress
 import json
@@ -92,6 +93,12 @@ EMPTY_CONFIG = {"torbox_key": "", "realdebrid_key": "", "alldebrid_key": "", "no
                 "config_version": 2,  # bumped when the layout changes; see migrate_config()
                 "notified_expiry": {}}  # service -> expiry date already warned about
 POLL_FAST, POLL_SLOW = 8, 60  # seconds between polls while something is active / when everything is idle
+POLL_FULL = 600  # idle cadence: timer polls ask for active items only and refetch the whole lists this often (see poll_kind)
+try:  # glibc: pin M_MMAP_THRESHOLD, so a multi-megabyte service answer is mapped and unmapped instead of becoming a
+    _LIBC = ctypes.CDLL("libc.so.6")  # hole in the heap once glibc's dynamic threshold has grown past it; see trim_memory
+    _LIBC.mallopt(-3, 128 * 1024)  # (measured 20-25 MB of RSS; applies to every allocation, raise it if drawing gets slower)
+except (OSError, AttributeError):  # not glibc
+    _LIBC = None
 
 
 def migrate_config(cfg):
@@ -283,6 +290,7 @@ class MergedClient:
 
     def __init__(self, tabs):
         self._tabs = tabs  # callable returning the real service tabs
+        self._copies = {}  # id(source dict) -> (source dict, its copy): light polls keep most source dicts, so most copies survive
 
     def _real(self):
         return [t for t in self._tabs() if t.client is not None and not isinstance(t.client, MergedClient)]
@@ -298,13 +306,18 @@ class MergedClient:
         tabs = self._real()
         return {"plan": "all services", "expires": "", "extra": f"{len(tabs)} configured: " + ", ".join(t.name for t in tabs)}
 
-    def torrents(self, active_only=False):
-        out = []
+    def torrents(self, active_only=False, ids=()):
+        out, copies = [], {}
         for tab in self._real():
             for t in tab.torrents:
                 if active_only and t["done"]:
                     continue
-                out.append({**t, "id": f"{tab.name}|{t['id']}", "service": tab.name})
+                src, copy = self._copies.get(id(t), (None, None))
+                if src is not t:  # a new source dict (the cache holds the old one, so its id cannot have been reused)
+                    copy = {**t, "id": f"{tab.name}|{t['id']}", "service": tab.name}
+                copies[id(t)] = (t, copy)
+                out.append(copy)
+        self._copies = copies
         return out
 
     def delete(self, tid, kind="torrent"):
@@ -620,6 +633,50 @@ def poll_tabs(tabs, fetch_one):
     return results
 
 
+def poll_kind(cached, age, fast, scheduled):
+    """What one poll asks a service for. 'full': the account and the whole list. 'light': the active items only
+    (torrents(active_only=True)), merged into the cached list by merge_active, plus the service's cheap check for
+    anything added or deleted elsewhere (stale). cached: a full list is in hand, age seconds old. Only a timer poll
+    (scheduled) is light, and only on a cached list younger than POLL_SLOW on the fast cadence (progress every tick,
+    the whole list once a minute, unless the client's light poll is complete: see _Client.LIGHT_COMPLETE) or
+    POLL_FULL on the idle one; whatever the user triggers is full. The lists are what costs: one poll of a
+    10 000-item library parses megabytes of JSON."""
+    return "light" if cached and scheduled and age < (POLL_SLOW if fast else POLL_FULL) else "full"
+
+
+def can_change(t):
+    """An unfinished item that may still move on its own: active, stalled, or finished but not yet available (Torbox
+    moves files after the download). Expired and failed items only change by hand. These are what a light poll asks
+    a service without an active-only query to refetch."""
+    return not t["done"] and label_of(t["state"]) not in (EXPIRED, ERROR)
+
+
+def poll_one(tab, now, fast, scheduled):
+    """One service's share of a poll, on a worker thread: (account, torrents) for the tab to render. A light poll
+    (poll_kind) merges the service's active items into the cached list and keeps it, unless an active item left the
+    set (need_full), the service reports a change elsewhere (stale) or it has no light query (None): then, as for a
+    full poll, the account and the whole list."""
+    client = tab.client
+    cached = tab._account is not None and bool(tab.torrents)
+    if poll_kind(cached, now - tab._last_full, fast and not client.LIGHT_COMPLETE, scheduled) == "light":
+        active = client.torrents(active_only=True, ids=[(t["id"], t["kind"]) for t in tab.torrents if can_change(t)])
+        if active is not None:
+            merged, need_full = merge_active(tab.torrents, active)
+            if not need_full and not client.stale(merged):
+                return tab._account, merged
+            log_event(tab.name, f"Light poll: {'an active item left' if need_full else 'the list changed elsewhere'}; fetching everything", "verbose")
+    account, torrents = client.account(), client.torrents()
+    tab._last_full = now
+    return account, torrents
+
+
+def trim_memory():
+    """Hand freed heap back to the kernel after a poll: service lists come and go in multi-megabyte bursts that glibc
+    would otherwise keep as resident free space. No-op without glibc."""
+    if _LIBC is not None:
+        _LIBC.malloc_trim(0)
+
+
 def merge_active(full, active):
     """Overlay an active-only poll onto the last full list. Returns (merged, need_full): need_full is True when
     something that was active is no longer in the active set (it finished or failed), so a full poll is due."""
@@ -823,12 +880,20 @@ TIME_FILTERS = (("all", "Any time"), ("day", "Last 24 hours"), ("week", "Last 7 
 TIME_WINDOW = {"day": 1, "week": 7, "month": 30}  # days
 
 
+@functools.lru_cache(maxsize=4)
+def added_cutoff(window, now):
+    """The oldest 'added' timestamp, as ISO text, that the window ("day", "week", "month") still shows; None for any
+    other window. Cached: _fill asks once per row with the same now."""
+    return (now - timedelta(days=TIME_WINDOW[window])).strftime("%Y-%m-%dT%H:%M:%S") if window in TIME_WINDOW else None
+
+
 def added_within(iso, window, now=None):
-    """True when the item was added inside the window ("all", "day", "week", "month"); unknown dates are never hidden."""
-    if window not in TIME_WINDOW:
-        return True
-    dt = _parse_iso(iso) if iso else None
-    return dt is None or (now or datetime.now(timezone.utc)) - dt <= timedelta(days=TIME_WINDOW[window])
+    """True when the item was added inside the window ("all", "day", "week", "month"); unknown dates are never hidden.
+    The timestamps compare as text, no parsing on a pass over 10 000 rows: every source gives ISO 8601 in UTC
+    (Real-Debrid and Torbox 'Z', AllDebrid's _iso_from_ts, the placeholders' isoformat), so an offset never has to
+    be honoured; a source with local offsets would need _parse_iso here again."""
+    cutoff = added_cutoff(window, now or datetime.now(timezone.utc))
+    return cutoff is None or not iso or not iso[:4].isdigit() or iso >= cutoff
 
 
 ADDING = "Adding"  # placeholder rows, until the service lists the item
@@ -912,8 +977,10 @@ class ServiceTab(Gtk.Box):
         self._width_timer = 0  # debounce for saving dragged column widths
         self._updated_at = 0  # time of the last successful poll, shown in the footer
         self._poll_every = app._interval  # seconds between polls, shown in the footer
-        self._last_full = 0  # time of the last full-list poll
+        self._last_full = 0  # time.monotonic() of the last full-list poll
         self._account = None  # last account dict, reused on active-only polls
+        self._stale = False  # a poll came while the tab was off screen (window hidden, another tab in front): its
+        self.connect("map", lambda _w: self._stale and self._refill())  # list is current, the rows are not; fill on map
 
         row = Gtk.Box(spacing=2)
         for icon, tip, cb in (("list-add-symbolic", "Add magnets / links", self.on_add),
@@ -1068,8 +1135,7 @@ class ServiceTab(Gtk.Box):
             f"{GLib.markup_escape_text(expiry_text(account['expires']))} · {GLib.markup_escape_text(account['extra'])}")
 
     def _update_totals(self):
-        visible_ids = {r[0] for r in self.store}
-        self.totals_label.set_text(totals_text(self.torrents, len(self.store), len(self.checked & visible_ids)))
+        self.totals_label.set_text(totals_text(self.torrents, len(self.store), len(self.checked & self._iters.keys())))
 
     # ----- column layout (one per service, kept in the config) -----
     def apply_columns(self):
@@ -1278,7 +1344,10 @@ class ServiceTab(Gtk.Box):
             self._pending = []
         self._known = ids
         self.checked &= ids
-        self._fill()
+        if self.get_mapped():
+            self._fill()
+        else:  # nobody is looking: the rows wait for the map signal (most of a tray app's life is spent hidden)
+            self._stale = True
         self.active = sum(1 for t in torrents if is_active(t))
         log_event(self.name, f"Poll: {len(torrents)} items, {self.active} active", "verbose")
         self._updated_at = time.time()
@@ -1341,6 +1410,15 @@ class ServiceTab(Gtk.Box):
             self.app.cfg.setdefault("filters", {})[self.name] = combo.get_active_id() or "all"
             save_config(self.app.cfg)
         self._fill()
+
+    def _refill(self):
+        """The tab came on screen with rows behind its list: the All tab rebuilds from the service tabs' lists,
+        a service tab shows what it has."""
+        self._stale = False
+        if self.is_merged:
+            self.render(self.client.account(), self.client.torrents(), None)
+        else:
+            self._fill()
 
     def _row_values(self, t):
         return [
@@ -1969,7 +2047,7 @@ class App:
         self.restart_requested = False  # set by restart(); main() re-execs this file after the main loop ends
         self._updating = ""  # version an update_to() is working on, until it finishes or fails
         self._installed = ""  # version installed in this session but not yet running (the user chose "Not now")
-        self._refresh_again = False
+        self._again = None  # "light" / "full": a refresh asked for while a poll was running
         self._timer = 0
         self._interval = POLL_SLOW
         self._settings_shown_for = None
@@ -2145,33 +2223,21 @@ class App:
             self.window.show_all()
             self.window.present()
 
-    def refresh(self, *_):
-        """Poll every configured service once. Returns True so GLib keeps the timer."""
+    def refresh(self, *_, scheduled=False):
+        """Poll every configured service once; scheduled: the timer asked, not the user (see poll_kind). Returns True
+        so GLib keeps the timer."""
         if self._polling:
-            self._refresh_again = True  # a poll is running; go again right after it
+            self._again = "light" if scheduled and self._again != "full" else "full"  # a poll is running; go again right after it
             return True
-        self._polling, self._refresh_again = True, False
+        self._polling, self._again = True, None
         tabs = [t for t in self.tabs if t.client is not None]
         for t in tabs:
             t.set_polling(True)
 
-        fast = self._interval == POLL_FAST
-        now = time.time()
-
-        def fetch_one(t):
-            """Full poll, or on the fast cadence an active-only poll merged into the cached list."""
-            light = (fast and t._account is not None and t.torrents and type(t.client) is not Torbox
-                     and now - t._last_full < POLL_SLOW)
-            if light:
-                merged, need_full = merge_active(t.torrents, t.client.torrents(active_only=True))
-                if not need_full:
-                    return t._account, merged
-            account, torrents = t.client.account(), t.client.torrents()
-            t._last_full = now
-            return account, torrents
+        fast, now = self._interval == POLL_FAST, time.monotonic()  # monotonic: a clock jump must not age or rejuvenate the lists
 
         def fetch():  # merged tabs are built from the other tabs' lists once those are rendered
-            return poll_tabs([t for t in tabs if not t.is_merged], fetch_one)
+            return poll_tabs([t for t in tabs if not t.is_merged], lambda t: poll_one(t, now, fast, scheduled))
 
         def done(results, _err):
             self._polling = False
@@ -2182,15 +2248,18 @@ class App:
                     if t in self.tabs:  # not a tab that Settings replaced while the poll ran
                         t.render(acc, tors, e)
                 for t in self.tabs:
-                    if t.is_merged:  # no network: merges the lists rendered just above
+                    if t.is_merged and t.get_mapped():  # no network: merges the lists rendered just above
                         t.render(t.client.account(), t.client.torrents(), None)
+                    elif t.is_merged:  # off screen: rebuilt on map (_refill); 12k copies not made for nobody
+                        t._stale = True
             finally:  # a failing render must never stop the polling cycle
                 active = sum(t.active for t in self.tabs if not t.is_merged)  # the All tab mirrors the others
                 self.icon.set_label(f"{active}↓" if active else "")
                 self.icon.set_tooltip_text(f"Debrid · {active} item(s) still downloading · polling every {self._interval} s")
                 self._schedule(POLL_FAST if active or any(t._pending for t in self.tabs) else POLL_SLOW)
-                if self._refresh_again:
-                    self.refresh()
+                trim_memory()
+                if self._again:
+                    self.refresh(scheduled=self._again == "light")
         run_async(fetch, done)
         return True
 
@@ -2205,7 +2274,7 @@ class App:
 
     def _tick(self):
         self._timer = 0
-        self.refresh()
+        self.refresh(scheduled=True)
         return False
 
     def set_columns(self, tab, order=None, hide=None, sort=None, widths=None):

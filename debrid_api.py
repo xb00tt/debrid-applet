@@ -44,6 +44,10 @@ class ApiError(Exception):
     """User-facing error message from a service call."""
 
 
+class NotFound(ApiError):
+    """HTTP 404: the service does not know the item (deleted elsewhere, or never there)."""
+
+
 _MAGNET_HASH = re.compile(r"xt=urn:btih:([0-9a-fA-F]{40}|[A-Za-z2-7]{32})")
 
 
@@ -80,6 +84,8 @@ def _num(v, cast=int):
 class _Client:
     BASE = ""
     name = ""
+    LIGHT_COMPLETE = False  # True: a light poll plus stale() show every change there is, so the whole list is only
+    # refetched every POLL_FULL even while something downloads (otherwise once a minute then, to catch what they miss)
 
     def __init__(self, token, session=None):
         self.token = token
@@ -101,9 +107,20 @@ class _Client:
             raise ApiError(_error_message(r))
         if r.status_code == 429:
             raise ApiError("Rate limited, retrying next tick")
+        if r.status_code == 404:
+            raise NotFound(_error_message(r))
         if r.status_code >= 400:
             raise ApiError(_error_message(r))
         return r
+
+    def stale(self, cached):
+        """After a light poll (torrents(active_only=True)) merged into cached: True when the service's list changed
+        in a way the light poll cannot show (an item added or deleted elsewhere), as far as a cheap request can tell;
+        the caller then fetches the whole list. Services that cannot tell say False. Every client's torrents()
+        takes active_only and ids ((id, kind) of the cached items that can still change) and answers a light poll
+        with the current state of the active items, or None when it has no cheaper query than the whole list (the
+        caller then fetches that)."""
+        return False
 
 
 def _body(r, service):
@@ -158,14 +175,21 @@ class RealDebrid(_Client):
     BASE = "https://api.real-debrid.com/rest/1.0"
     name = "Real-Debrid"
     short = "RD"
+    LIGHT_COMPLETE = True  # the active filter shows progress and finishes, X-Total-Count adds and deletes
 
     def __init__(self, token, session=None):
         super().__init__(token, session)
         self._select_failed = {}  # id -> message of a permanent selectFiles failure; not re-sent on every poll
+        self.total = None  # X-Total-Count of the last /torrents answer: every torrent, whatever the filter
 
     def _json(self, method, path, **kw):
         r = self._req(method, path, **kw)
+        if path == "/torrents" and str(r.headers.get("X-Total-Count", "")).isdigit():
+            self.total = int(r.headers["X-Total-Count"])
         return None if r.status_code == 204 or not r.text else _body(r, self.name)
+
+    def stale(self, cached):
+        return self.total is not None and self.total != len(cached)
 
     def account(self):
         u = self._json("GET", "/user") or {}
@@ -175,51 +199,50 @@ class RealDebrid(_Client):
             "extra": f"{u.get('points', 0)} points",
         }
 
-    def torrents(self, active_only=False):
+    def torrents(self, active_only=False, ids=()):
+        """The whole list page by page, or with active_only the active items in one request: the filter only works
+        without page (with it the whole page comes back, observed 2026-10)."""
         out = []
-        items = []
         for page in range(1, 41):  # 5000 is the API maximum per page; stop at the first short page (or 200 000 items)
-            params = {"limit": 5000, "page": page}
-            if active_only:
-                params["filter"] = "active"
+            params = {"filter": "active", "limit": 5000} if active_only else {"limit": 5000, "page": page}
             chunk = self._json("GET", "/torrents", params=params) or []
-            items += chunk
-            if len(chunk) < 5000:
+            for t in chunk:  # page by page: the raw page is garbage before the next one is fetched
+                if t.get("id") is None:
+                    continue
+                raw = t.get("status", "")
+                state = state_label(raw, RD_STATES)
+                if raw == "waiting_files_selection":
+                    err = self._select_failed.get(t["id"])
+                    if err is None:
+                        try:
+                            self._select_all(t["id"])
+                        except ApiError as e:
+                            err = str(e)
+                            if err in RD_PERMANENT_SELECT_ERRORS:
+                                self._select_failed[t["id"]] = err
+                    if err:
+                        state = f"{ERROR}: select failed: {err}"
+                out.append({
+                    "id": str(t["id"]),
+                    "name": t.get("filename", ""),
+                    "progress": _num(t.get("progress"), float),
+                    "state": state,
+                    "done": t.get("status") == "downloaded",
+                    "size": _num(t.get("bytes")),
+                    "seeds": _num(t.get("seeders")),
+                    "speed": _num(t.get("speed")),
+                    "kind": "torrent",
+                    "up_speed": None,  # Real-Debrid does not report these three
+                    "peers": None,
+                    "ratio": None,
+                    "added": t.get("added") or "",
+                    "finished": t.get("ended") or "",
+                    "hash": t.get("hash") or "",
+                    "raw_state": raw,
+                })
+            if active_only or len(chunk) < 5000:
                 break
-        for t in items:
-            if t.get("id") is None:
-                continue
-            raw = t.get("status", "")
-            state = state_label(raw, RD_STATES)
-            if raw == "waiting_files_selection":
-                err = self._select_failed.get(t["id"])
-                if err is None:
-                    try:
-                        self._select_all(t["id"])
-                    except ApiError as e:
-                        err = str(e)
-                        if err in RD_PERMANENT_SELECT_ERRORS:
-                            self._select_failed[t["id"]] = err
-                if err:
-                    state = f"{ERROR}: select failed: {err}"
-            out.append({
-                "id": str(t["id"]),
-                "name": t.get("filename", ""),
-                "progress": _num(t.get("progress"), float),
-                "state": state,
-                "done": t.get("status") == "downloaded",
-                "size": _num(t.get("bytes")),
-                "seeds": _num(t.get("seeders")),
-                "speed": _num(t.get("speed")),
-                "kind": "torrent",
-                "up_speed": None,  # Real-Debrid does not report these three
-                "peers": None,
-                "ratio": None,
-                "added": t.get("added") or "",
-                "finished": t.get("ended") or "",
-                "hash": t.get("hash") or "",
-                "raw_state": raw,
-            })
+            chunk = None  # this page goes before the next one is fetched and parsed
         return out
 
     def _select_all(self, tid):
@@ -261,6 +284,12 @@ class Torbox(_Client):
     name = "Torbox"
     short = "TB"
     PLANS = {0: "Free", 1: "Essential", 2: "Pro", 3: "Standard"}
+    LIGHT_MAX = 10  # items fetched one by one per light poll; above that the whole list is the cheaper request
+
+    def __init__(self, token, session=None):
+        super().__init__(token, session)
+        self._gone = False  # a light poll met an id the service no longer knows: deleted elsewhere, stale() says so
+
     def _call(self, method, path, **kw):
         """Full Torbox envelope after success checks."""
         body = _body(self._req(method, path, **kw), self.name)
@@ -283,35 +312,69 @@ class Torbox(_Client):
             "extra": f"{u.get('total_downloaded', 0)} downloads",
         }
 
-    def torrents(self, active_only=False):  # Torbox has no active-only query; always the full list
+    def torrents(self, active_only=False, ids=()):
+        """The whole list (every file of every item travels with it: megabytes for a big library), or with
+        active_only the items in ids ((id, kind) pairs) one by one, the API having no active-only query. An id the
+        service no longer knows is left out, so the caller's merge notices and asks for the whole list. More than
+        LIGHT_MAX ids: None, the whole list is the cheaper request then (300 requests a minute is the limit)."""
         out = []
+        if active_only:
+            if len(ids) > self.LIGHT_MAX:
+                return None
+            for tid, kind in ids:
+                try:
+                    t = self._json("GET", "/webdl/mylist" if kind == "webdl" else "/torrents/mylist",
+                                   params={"id": int(tid), "bypass_cache": "true"})
+                except NotFound:
+                    self._gone = True
+                    continue
+                if isinstance(t, dict) and t.get("id") is not None:
+                    out.append(self._item(t, kind))
+            return out
         for kind, path in (("torrent", "/torrents/mylist"), ("webdl", "/webdl/mylist")):
             for t in self._json("GET", path, params={"bypass_cache": "true", "limit": 5000}) or []:
-                if t.get("id") is None:
-                    continue
-                raw = t.get("download_state") or ""
-                label = state_label(raw, TB_STATES)
-                done = bool(t.get("download_finished")) and bool(t.get("download_present"))
-                moving = t.get("active") is not False  # Torbox keeps the last speeds on stopped / finished items
-                out.append({
-                    "id": str(t["id"]),
-                    "name": t.get("name", ""),
-                    "progress": min(100.0, _num(t.get("progress"), float) * 100),  # API gives 0..1
-                    "state": label if kind == "torrent" else f"{label} (web)",
-                    "done": done,
-                    "size": _num(t.get("size")),
-                    "seeds": _num(t.get("seeds")),
-                    "speed": _num(t.get("download_speed")) if moving else 0,
-                    "kind": kind,
-                    "up_speed": _num(t.get("upload_speed")) if moving else 0,
-                    "peers": _num(t.get("peers")),
-                    "ratio": _num(t.get("ratio"), float),
-                    "added": t.get("created_at") or "",
-                    "finished": (t.get("updated_at") or "") if done else "",  # no finish timestamp in the API
-                    "hash": t.get("hash") or "",
-                    "raw_state": raw,
-                })
+                if t.get("id") is not None:
+                    out.append(self._item(t, kind))
         return out
+
+    def stale(self, cached):
+        """An id the light poll could not find (deleted elsewhere), else the newest item of each list (Torbox lists
+        newest first) against the cached ids: an item added elsewhere shows up on the next poll; one deleted elsewhere
+        waits for the next full list unless the light poll asked for it."""
+        if self._gone:
+            self._gone = False
+            return True
+        ids = {t["id"] for t in cached}
+        for path in ("/torrents/mylist", "/webdl/mylist"):
+            newest = self._json("GET", path, params={"bypass_cache": "true", "limit": 1})
+            if isinstance(newest, list) and newest and str(newest[0].get("id")) not in ids:
+                return True
+        return False
+
+    @staticmethod
+    def _item(t, kind):
+        raw = t.get("download_state") or ""
+        label = state_label(raw, TB_STATES)
+        done = bool(t.get("download_finished")) and bool(t.get("download_present"))
+        moving = t.get("active") is not False  # Torbox keeps the last speeds on stopped / finished items
+        return {
+            "id": str(t["id"]),
+            "name": t.get("name", ""),
+            "progress": min(100.0, _num(t.get("progress"), float) * 100),  # API gives 0..1
+            "state": label if kind == "torrent" else f"{label} (web)",
+            "done": done,
+            "size": _num(t.get("size")),
+            "seeds": _num(t.get("seeds")),
+            "speed": _num(t.get("download_speed")) if moving else 0,
+            "kind": kind,
+            "up_speed": _num(t.get("upload_speed")) if moving else 0,
+            "peers": _num(t.get("peers")),
+            "ratio": _num(t.get("ratio"), float),
+            "added": t.get("created_at") or "",
+            "finished": (t.get("updated_at") or "") if done else "",  # no finish timestamp in the API
+            "hash": t.get("hash") or "",
+            "raw_state": raw,
+        }
 
     def add_magnet(self, magnet):
         self._json("POST", "/torrents/createtorrent", files={"magnet": (None, magnet)})
@@ -416,10 +479,11 @@ class AllDebrid(_Client):
         return {"plan": plan, "expires": _iso_from_ts(u.get("premiumUntil"))[:10],
                 "extra": f"{u.get('fidelityPoints', 0)} points"}
 
-    def torrents(self, active_only=False):
+    def torrents(self, active_only=False, ids=()):
+        if active_only:  # v4.1 ignores its status filter (observed 2026-10): no cheaper query than the whole list
+            return None
         out = []
-        kw = {"data": {"status": "active"}} if active_only else {}
-        for m in self._call("POST", "/v4.1/magnet/status", **kw).get("magnets") or []:
+        for m in self._call("POST", "/v4.1/magnet/status").get("magnets") or []:
             if m.get("id") is None:
                 continue
             code = _num(m.get("statusCode"))
