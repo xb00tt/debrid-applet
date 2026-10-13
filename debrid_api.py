@@ -9,6 +9,11 @@ import requests
 TIMEOUT = 15
 USER_AGENT = "debrid-applet"
 INVALID_KEY = "Invalid API key"
+
+
+def is_invalid_key(message):
+    """The service rejected the key: INVALID_KEY plus the evidence in brackets (status, code)."""
+    return str(message).startswith(INVALID_KEY)
 TORBOX_AUTH_ERRORS = ("NO_AUTH", "BAD_TOKEN", "AUTH_ERROR")
 
 # One vocabulary for every service's download state; the service's own word travels along as "raw_state".
@@ -97,13 +102,12 @@ class _Client:
             r = self.s.request(method, self.BASE + path, timeout=TIMEOUT, **kw)
         except requests.RequestException as e:  # the text embeds the URL, and Torbox puts the key in a query param
             raise ApiError(f"Network error: {str(e).replace(self.token, '***') if self.token else e}") from e
-        if r.status_code == 401:
-            raise ApiError(INVALID_KEY)
-        if r.status_code == 403:
-            # Torbox uses 403 for bad tokens; Real-Debrid uses it for permission errors with a message.
+        if r.status_code in (401, 403):
             body = _json_or_none(r)
-            if body is None or _is_auth_error(body):
-                raise ApiError(INVALID_KEY)
+            code = _auth_code(body)
+            if r.status_code == 401 or (body is not None and _is_auth_error(body)):
+                raise ApiError(f"{INVALID_KEY} (HTTP {r.status_code}{' ' + code if code else ''})")
+            # 403 with a service message (Real-Debrid permission errors) or without JSON (a CDN page): not a verdict on the key
             raise ApiError(_error_message(r))
         if r.status_code == 429:
             raise ApiError("Rate limited, retrying next tick")
@@ -148,10 +152,17 @@ def _iso_from_ts(ts):
         return ""
 
 
-def _is_auth_error(body):
-    err = body.get("error")
+def _auth_code(body):
+    """The error code string of a service body: Torbox 'error': 'CODE', AllDebrid 'error': {'code': …}, Real-Debrid
+    'error': 'bad_token'; '' when absent."""
+    err = body.get("error") if isinstance(body, dict) else None
     code = err.get("code", "") if isinstance(err, dict) else err
-    return code in TORBOX_AUTH_ERRORS or str(code or "").startswith("AUTH_")
+    return str(code or "")
+
+
+def _is_auth_error(body):
+    code = _auth_code(body)
+    return code in TORBOX_AUTH_ERRORS or code.startswith("AUTH_")
 
 
 def _json_or_none(r):
@@ -297,7 +308,7 @@ class Torbox(_Client):
             raise ApiError(f"Unexpected response from {self.name}")
         if not body.get("success"):
             if _is_auth_error(body):
-                raise ApiError(INVALID_KEY)
+                raise ApiError(f"{INVALID_KEY} ({_auth_code(body)})")
             raise ApiError(body.get("detail") or body.get("error") or "Torbox error")
         return body
 
@@ -462,7 +473,7 @@ class AllDebrid(_Client):
             raise ApiError(f"Unexpected response from {self.name}")
         if body.get("status") != "success":
             if _is_auth_error(body):
-                raise ApiError(INVALID_KEY)
+                raise ApiError(f"{INVALID_KEY} ({_auth_code(body)})")
             err = body.get("error") or {}
             raise ApiError((err.get("message") or err.get("code") or "AllDebrid error") if isinstance(err, dict) else str(err))
         return body.get("data") or {}

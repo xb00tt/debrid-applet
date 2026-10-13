@@ -285,17 +285,23 @@ def test_rd_add_link():
 
 
 def test_invalid_key():
+    from debrid_api import is_invalid_key
     cases = [
-        RealDebrid("t", FakeSession(FakeResp(401, {"error": "bad_token", "error_code": 8}))),
-        Torbox("t", FakeSession(FakeResp(403, {"success": False, "error": "BAD_TOKEN", "detail": "bad", "data": None}))),
-        Torbox("t", FakeSession(FakeResp(403, None))),
+        (RealDebrid("t", FakeSession(FakeResp(401, {"error": "bad_token", "error_code": 8}))), "Invalid API key (HTTP 401 bad_token)"),
+        (Torbox("t", FakeSession(FakeResp(403, {"success": False, "error": "BAD_TOKEN", "detail": "bad", "data": None}))), "Invalid API key (HTTP 403 BAD_TOKEN)"),
+        (RealDebrid("t", FakeSession(FakeResp(401, None))), "Invalid API key (HTTP 401)"),
     ]
-    for c in cases:
+    for c, expected in cases:
         try:
             c.account()
             assert False, "expected ApiError"
         except ApiError as e:
-            assert str(e) == "Invalid API key"
+            assert str(e) == expected and is_invalid_key(str(e))
+    try:  # a 403 without a JSON body is a CDN or proxy page, not a verdict on the key
+        Torbox("t", FakeSession(FakeResp(403, None))).account()
+        assert False
+    except ApiError as e:
+        assert str(e).startswith("HTTP 403") and not is_invalid_key(str(e))
 
 
 def test_403_with_service_message_is_not_invalid_key():
@@ -460,7 +466,7 @@ def test_ad_add_link_and_errors():
             AllDebrid("t", FakeSession(ad_err(code))).account()
             assert False
         except ApiError as e:
-            assert str(e) == "Invalid API key"
+            assert str(e) == f"Invalid API key ({code})"
     try:
         AllDebrid("t", FakeSession(ad_err("MAGNET_TOO_MANY_ACTIVE", "Too many active magnets"))).torrents()
         assert False
@@ -691,7 +697,7 @@ def test_tb_bad_token_is_invalid_key():
         Torbox("t", s).account()
         assert False
     except ApiError as e:
-        assert str(e) == "Invalid API key"
+        assert str(e) == "Invalid API key (BAD_TOKEN)"
 
 
 def test_config_roundtrip_and_mode(tmp_dir="/tmp/debrid-test-config"):
@@ -1810,6 +1816,16 @@ def test_flatpak_manifest():
     assert os.path.exists("packaging/python3-requirements.json")
     cmds = "\n".join(app["build-commands"])
     assert f"Icon={da.DBUS_ID}" in cmds and f"/app/share/metainfo/{da.DBUS_ID}.metainfo.xml" in cmds
+
+
+def test_invalid_key_evidence():
+    import debrid_api as api
+    import debrid_applet as da
+    assert api.is_invalid_key("Invalid API key") and api.is_invalid_key("Invalid API key (HTTP 403 BAD_TOKEN)")
+    assert not api.is_invalid_key("HTTP 403: <html>") and not api.is_invalid_key("Network error: x")
+    assert api._auth_code({"error": "BAD_TOKEN"}) == "BAD_TOKEN" and api._auth_code({"error": {"code": "AUTH_X"}}) == "AUTH_X"
+    assert api._auth_code({"error": None}) == "" and api._auth_code({}) == ""
+    assert not da.retryable("Invalid API key (HTTP 401)")  # a bad key is never retried
 
 
 if __name__ == "__main__":
