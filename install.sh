@@ -8,10 +8,11 @@ AUTO="$HOME/.config/autostart"
 mkdir -p "$DIR" "$APPS" "$AUTO"
 ICONS="$HOME/.local/share/icons/hicolor/scalable/apps"
 META="$HOME/.local/share/metainfo"
-mkdir -p "$ICONS" "$META"
+mkdir -p "$ICONS"
+mkdir -p "$META" 2>/dev/null || true
 cp "$SRC/debrid_api.py" "$SRC/debrid_local_api.py" "$SRC/debrid_update.py" "$SRC/debrid_applet.py" "$SRC/debrid-applet.svg" "$DIR/"
 cp "$SRC/debrid-applet.svg" "$ICONS/debrid-applet.svg"
-cp "$SRC/io.github.xb00tt.debrid_applet.metainfo.xml" "$META/"
+cp "$SRC/io.github.xb00tt.debrid_applet.metainfo.xml" "$META/" 2>/dev/null || true  # store data only; never blocks the install
 gtk-update-icon-cache -q "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
 sed "s|@EXEC@|python3 $DIR/debrid_applet.py|" "$SRC/debrid-applet.desktop" > "$APPS/debrid-applet.desktop"
 cp "$APPS/debrid-applet.desktop" "$AUTO/debrid-applet.desktop"
