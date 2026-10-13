@@ -44,7 +44,7 @@ except (ValueError, ImportError):
     Ayatana = None
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-from debrid_api import (DONE, DOWNLOADING, ERROR, EXPIRED, INVALID_KEY, PROCESSING, QUEUED, SEEDING, STALLED,  # noqa: E402
+from debrid_api import (DONE, DOWNLOADING, ERROR, EXPIRED, PROCESSING, QUEUED, SEEDING, STALLED, is_invalid_key,  # noqa: E402
                         AllDebrid, ApiError, RealDebrid, Torbox, human_size, magnet_hash)
 from debrid_local_api import LocalApi  # noqa: E402
 from debrid_update import deb_command, download, install_mode, install_user, latest_release, verify_signature  # noqa: E402
@@ -789,6 +789,19 @@ def retryable(message):
     return message.startswith(("Rate limited", "Network error"))
 
 
+AUTH_CONFIRM_EVERY = 300  # seconds between confirmation requests per service after an invalid-key answer
+
+
+def should_confirm_auth(last_at, now, every=AUTH_CONFIRM_EVERY):
+    """One account() call confirms an invalid-key answer before Settings opens; never more often than every."""
+    return last_at is None or now - last_at >= every
+
+
+def auth_confirmed(check_error):
+    """The confirming account() call failed the same way: the key really is rejected."""
+    return check_error is not None and is_invalid_key(check_error)
+
+
 def route_items(items, checker):
     """Split items into {True: cached on the checker's service, False: the rest}. checker needs check_cached()."""
     hashes = {i: magnet_hash(i) for i in items if i.lower().startswith("magnet:")}
@@ -1165,6 +1178,7 @@ class ServiceTab(Gtk.Box):
         self._hold_until = 0
         self._width_timer = 0  # debounce for saving dragged column widths
         self._updated_at = 0  # time of the last successful poll, shown in the footer
+        self._auth_checked_at = None  # time.monotonic() of the last invalid-key confirmation request
         self._poll_every = app._interval  # seconds between polls, shown in the footer
         self._last_full = 0  # time.monotonic() of the last full-list poll
         self._account = None  # last account dict, reused on active-only polls
@@ -1499,8 +1513,26 @@ class ServiceTab(Gtk.Box):
         if error and (not self.errors or self.errors[-1][1] != msg):
             self.errors = (self.errors + [(time.strftime("%H:%M:%S"), msg)])[-8:]
             self.status.set_tooltip_text("Recent errors:\n" + "\n".join(f"{t}  {m}" for t, m in self.errors))
-        if error and msg == INVALID_KEY:
-            self.app.open_settings_once()
+        if error and is_invalid_key(msg):
+            self._confirm_auth(msg)
+
+    def _confirm_auth(self, first):
+        """A service said the key is invalid. Outages have said so with a valid key (Torbox, 2026-10-13), so ask once
+        more with account(); Settings opens only when that answer is a rejection too."""
+        now = time.monotonic()
+        if self.client is None or not should_confirm_auth(self._auth_checked_at, now):
+            return
+        self._auth_checked_at = now
+
+        def done(_account, err):
+            if self not in self.app.tabs:  # Settings rebuilt the tabs meanwhile; nothing to show here
+                return
+            if auth_confirmed(err):
+                log_event(self.name, f"Invalid API key confirmed by a second request: {first} / {err}", "error")
+                self.app.open_settings_once()
+            else:
+                log_event(self.name, f"Transient auth error ignored: {first}; check said: {err or 'OK'}", "error")
+        run_async(self.client.account, done)
 
     def _run(self, fn, cb):
         """Run a network action; show errors in the status label; then cb(result, error)."""

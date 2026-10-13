@@ -1828,6 +1828,16 @@ def test_invalid_key_evidence():
     assert not da.retryable("Invalid API key (HTTP 401)")  # a bad key is never retried
 
 
+def test_auth_confirmation_policy():
+    import debrid_applet as da
+    assert da.should_confirm_auth(None, 1000.0)  # first error: always check
+    assert not da.should_confirm_auth(1000.0, 1100.0)  # inside the window: show the error, no second request
+    assert da.should_confirm_auth(1000.0, 1000.0 + da.AUTH_CONFIRM_EVERY)
+    assert da.should_confirm_auth(1000.0, 1010.0, every=5)
+    assert da.auth_confirmed("Invalid API key (HTTP 403 BAD_TOKEN)")
+    assert not da.auth_confirmed("Network error: timeout") and not da.auth_confirmed(None)
+
+
 if __name__ == "__main__":
     import sys
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
