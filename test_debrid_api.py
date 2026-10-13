@@ -1505,6 +1505,7 @@ def test_deb_package():
         assert "rm -rf /usr/share/debrid-applet/__pycache__" in open(os.path.join(tmp, "DEBIAN/prerm")).read()
         assert all(os.access(os.path.join(tmp, "DEBIAN", s), os.X_OK) for s in ("postinst", "prerm"))
         assert sorted(os.listdir(os.path.join(tmp, "usr/share/debrid-applet"))) == sorted(du.FILES)
+        assert os.path.exists(os.path.join(tmp, "usr/share/metainfo", METAINFO))  # app stores read it from here
 
 
 def test_update_install_user_from_tarball():

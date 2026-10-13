@@ -8,9 +8,10 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 APP="$STAGE/usr/share/$PKG"
 mkdir -p "$APP" "$STAGE/usr/bin" "$STAGE/usr/share/applications" "$STAGE/etc/xdg/autostart" \
-         "$STAGE/usr/share/icons/hicolor/scalable/apps" "$STAGE/usr/share/doc/$PKG" "$STAGE/DEBIAN"
+         "$STAGE/usr/share/icons/hicolor/scalable/apps" "$STAGE/usr/share/doc/$PKG" "$STAGE/usr/share/metainfo" "$STAGE/DEBIAN"
 cp "$SRC/debrid_api.py" "$SRC/debrid_local_api.py" "$SRC/debrid_update.py" "$SRC/debrid_applet.py" "$SRC/debrid-applet.svg" "$APP/"
 cp "$SRC/debrid-applet.svg" "$STAGE/usr/share/icons/hicolor/scalable/apps/"
+cp "$SRC/io.github.xb00tt.DebridApplet.metainfo.xml" "$STAGE/usr/share/metainfo/"
 cp "$SRC/README.md" "$SRC/LICENSE" "$STAGE/usr/share/doc/$PKG/"
 cat > "$STAGE/usr/bin/$PKG" <<LAUNCHER
 #!/bin/sh
