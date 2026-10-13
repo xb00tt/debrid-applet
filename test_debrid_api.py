@@ -699,9 +699,15 @@ def test_tb_bad_token_is_invalid_key():
         assert False
     except ApiError as e:
         assert str(e) == "Invalid API key (BAD_TOKEN)"
-    # only BAD_TOKEN is a verdict on the key (observed 2026-10-13; no key is a 401 without a code). Other codes,
-    # AUTH_ERROR included, show as the service's own message and never open Settings.
-    for code in ("AUTH_ERROR", "NO_AUTH", "DATABASE_ERROR"):
+    # Torbox docs (api-docs.torbox.app, errors table): NO_AUTH "no provided credentials" and BAD_TOKEN "token invalid"
+    # are client faults and a verdict on the key; a code ending in ERROR is the server's fault, AUTH_ERROR ("error
+    # verifying the given authentication") included: those show as Torbox's own message and never open Settings.
+    try:
+        Torbox("t", FakeSession(FakeResp(200, {"success": False, "error": "NO_AUTH", "detail": "no creds", "data": None}))).account()
+        assert False
+    except ApiError as e:
+        assert str(e) == "Invalid API key (NO_AUTH)"
+    for code in ("AUTH_ERROR", "DATABASE_ERROR", "UNKNOWN_ERROR"):
         try:
             Torbox("t", FakeSession(FakeResp(200, {"success": False, "error": code, "detail": "Something failed.", "data": None}))).account()
             assert False

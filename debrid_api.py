@@ -9,8 +9,9 @@ import requests
 TIMEOUT = 15
 USER_AGENT = "debrid-applet"
 INVALID_KEY = "Invalid API key"
-TORBOX_AUTH_ERRORS = ("BAD_TOKEN",)  # the one code a bad key answers with (HTTP 403, observed 2026-10-13); a missing
-# key is a 401 without a code. AUTH_ERROR / NO_AUTH were never observed and are undocumented: they stay plain errors.
+TORBOX_AUTH_ERRORS = ("NO_AUTH", "BAD_TOKEN")  # api-docs.torbox.app errors table: "no provided credentials" and "token
+# invalid", client faults. Torbox's rule: a code ending in ERROR is the server's fault, so AUTH_ERROR ("error verifying
+# the given authentication") is an outage, not a verdict on the key. A bad key answers HTTP 403 BAD_TOKEN (probed).
 
 
 def is_invalid_key(message):
@@ -162,10 +163,11 @@ def _auth_code(body):
 
 
 def _is_auth_error(body):
-    """Torbox BAD_TOKEN, or AllDebrid's AUTH_* family (AUTH_BAD_APIKEY, AUTH_MISSING_APIKEY, …), which Torbox never uses
-    except for the generic AUTH_ERROR, excluded by name."""
+    """Torbox NO_AUTH / BAD_TOKEN, or AllDebrid's AUTH_* family (docs.alldebrid.com: AUTH_MISSING_APIKEY,
+    AUTH_BAD_APIKEY, AUTH_BLOCKED, AUTH_USER_BANNED); never a code ending in ERROR, which both Torbox's convention and
+    AllDebrid's naming reserve for server-side failures."""
     code = _auth_code(body)
-    return code in TORBOX_AUTH_ERRORS or (code.startswith("AUTH_") and code != "AUTH_ERROR")
+    return code in TORBOX_AUTH_ERRORS or (code.startswith("AUTH_") and not code.endswith("ERROR"))
 
 
 def _json_or_none(r):

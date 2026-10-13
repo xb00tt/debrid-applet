@@ -8,9 +8,11 @@ Open notes:
 - Keyring storage for API keys was removed after it lost keys twice on this machine; if it comes back it needs a cross-restart verification step before the file copy is dropped.
 - Another service (Premiumize etc.): recipe in the README's Dev section; only with an account to test against.
 - AllDebrid hoster-link unlock: request path verified live; a successful unlock of a real hoster link hasn't been observed yet.
-- Torbox's auth codes are undocumented (`AUTH_ERROR` semantics unknown). Since v1.2.1 invalid-key errors log the HTTP
-  status and code and Settings opens only after a second rejection; revisit `TORBOX_AUTH_ERRORS` when a logged incident
-  shows a code that was not `BAD_TOKEN` (a bad key answers `HTTP 403 BAD_TOKEN`, observed 2026-10-13).
+- Torbox auth codes, closed 2026-10-13 against api-docs.torbox.app (errors table): `NO_AUTH` "no provided credentials"
+  and `BAD_TOKEN` "token invalid" are the key verdicts (`TORBOX_AUTH_ERRORS`); a code ending in `ERROR` is the server's
+  fault by Torbox's own rule, so `AUTH_ERROR` ("error verifying the given authentication", the outage case) shows as
+  Torbox's message and never opens Settings. Probed live: no key is `HTTP 401`, a bad key `HTTP 403 BAD_TOKEN`. Since
+  v1.2.1 Settings opens only after a second rejection and the log names status and code.
 
 Roadmap (decided 2026-10-13, from the "full-fledged Linux app" discussion; goal is reach for other users, kept light).
 Items 1-4 shipped by v1.2.1; 3 is built but unpublished by decision; 5 is deferred:

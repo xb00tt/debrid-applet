@@ -90,6 +90,19 @@ GitHub computes the `digest` the applet verifies. Drafts and prereleases are inv
 it takes every `.py` and `.svg` directly under the archive root (tests excluded), so a new module travels with the
 release; `debrid_update.FILES` is the required minimum and must match the copy list in `install.sh` (a test checks).
 
+## Service API references
+
+- Torbox: https://api-docs.torbox.app/ (script-rendered: open it in a browser, plain fetches get only the heading) —
+  standard envelope `{success, error, detail, data}`, errors table (codes ending in `ERROR` are server faults), 403 =
+  auth error, 300 requests/min per token, `createtorrent` 60/hour for uncached items; rate-limit article:
+  https://support.torbox.app/en/articles/13726368-api-rate-limits
+- AllDebrid: https://docs.alldebrid.com/ — `{status, error: {code, message}}`, `AUTH_*` codes, 12 requests/s and
+  600/min, 429 or 503 when exceeded; `magnet/status` documents a `status` filter that v4.1 ignores in practice (see the
+  ceilings in `TODO.md`).
+- Real-Debrid: https://api.real-debrid.com/ — numeric `error_code` table (8 = bad token), 401 = bad token, 403 =
+  permission denied (not a token problem), 250 requests/min, 429 when exceeded, `/torrents` `filter=active`, `limit` up
+  to 5000, `X-Total-Count`.
+
 ## Adding a service
 
 One client class in `debrid_api.py` with `name` and `short` (the All tab's two-letter label) implementing `account`,

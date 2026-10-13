@@ -26,8 +26,10 @@ Flatpak keeps its own config: to carry keys over from the deb, copy `~/.config/d
 `~/.var/app/io.github.xb00tt.debrid-applet/config/debrid-applet/`.
 
 Prefer running from source? Clone the repo and run `./install.sh` (`sudo apt install python3-requests python3-defusedxml` first).
-On Fedora: `sudo dnf install python3-gobject gtk3 libnotify python3-requests python3-defusedxml`; on Arch:
-`sudo pacman -S python-gobject gtk3 libnotify python-requests python-defusedxml`; then `./install.sh` from the release tarball.
+On Fedora: `sudo dnf install python3-gobject gtk3 libnotify python3-requests python3-defusedxml libayatana-appindicator-gtk3`;
+on Arch: `sudo pacman -S python-gobject gtk3 libnotify python-requests python-defusedxml libayatana-appindicator`;
+on openSUSE: `sudo zypper install python3-gobject python3-gobject-Gdk typelib-1_0-Gtk-3_0 typelib-1_0-Notify-0_7 python3-requests python3-defusedxml typelib-1_0-AyatanaAppIndicator3-0_1`;
+then `./install.sh` from the release tarball. The last package on each line is the tray icon; without it the window opens at start.
 
 ## First run
 
