@@ -235,9 +235,6 @@ def find_player():
     return next((p for p in PLAYERS if shutil.which(p)), None)
 
 
-TRAY_KINDS = ("xapp", "ayatana", "xapp-fallback", "none")
-
-
 def tray_choice(xapp_state, have_xapp, have_ayatana, forced=""):
     """Which status icon to keep. xapp_state: XApp's state nick once a host has answered ('native', 'fallback',
     'no-support') or None when XApp is not installed. Ayatana wherever XApp is not native; XApp's own XEmbed
@@ -261,6 +258,25 @@ def tray_choice(xapp_state, have_xapp, have_ayatana, forced=""):
 def is_wayland(display_type_name):
     """type(Gdk.Display.get_default()).__name__ is 'GdkWaylandDisplay' there, 'X11Display' under X11."""
     return "Wayland" in display_type_name
+
+
+SNI_WATCHER = "org.kde.StatusNotifierWatcher"  # owned by KDE, GNOME's AppIndicator extension, XFCE's status tray, xapp-sn-watcher
+
+
+def has_bus_name(name):
+    """True when someone owns name on the session bus; False without a bus or on any error."""
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        reply = bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "NameHasOwner",
+                              GLib.Variant("(s)", (name,)), None, Gio.DBusCallFlags.NONE, 1000, None)
+        return bool(reply.unpack()[0])
+    except GLib.Error:
+        return False
+
+
+def try_xapp(forced):
+    """Build the XApp icon first unless the knob names another backend; any other word falls through to the normal chain."""
+    return forced not in ("ayatana", "none")
 
 
 def usable_links(links):
@@ -2071,19 +2087,19 @@ class Tray:
     'state-changed' (about 1 ms later on Cinnamon), so the choice waits for that signal or a 2 s timer, then
     on_decided(kind) runs once on the main loop. The count is kept and replayed onto whichever backend wins."""
 
-    def __init__(self, app, menu, show_item, on_decided):
-        self.app, self.menu, self.show_item, self.on_decided = app, menu, show_item, on_decided
+    def __init__(self, menu, show_item, on_toggle, on_decided):
+        self.menu, self.show_item, self.on_decided = menu, show_item, on_decided
         self.kind = None
         self.icon = self.indicator = None
         self._count = (0, POLL_SLOW)
         self._timer = 0
-        forced = os.environ.get("DEBRID_APPLET_TRAY", "")
-        if XApp is not None and forced in ("", "xapp"):
+        self._forced = os.environ.get("DEBRID_APPLET_TRAY", "")
+        if XApp is not None and try_xapp(self._forced):
             self.icon = XApp.StatusIcon()
             self.icon.set_name(APP_ID)
             self.icon.set_icon_name(os.path.join(HERE, APP_ID + ".svg"))
             self.icon.set_tooltip_text("Debrid")
-            self.icon.connect("activate", app.toggle_window)  # left click; the menu's first entry does the same
+            self.icon.connect("activate", on_toggle)  # left click; the menu's first entry does the same
             self.icon.set_secondary_menu(menu)
             self.icon.connect("state-changed", self._on_state)
             self._timer = GLib.timeout_add_seconds(2, lambda: self._decide(self.icon.get_state().value_nick) and False)
@@ -2091,8 +2107,8 @@ class Tray:
             GLib.idle_add(lambda: self._decide(None) and False)  # after App.__init__, like the signal would be
 
     def _on_state(self, _icon, state):
-        if state.value_nick != "no-support":  # native or fallback: the host has answered; no-support may still change
-            self._decide(state.value_nick)
+        if state.value_nick == "native":  # only a host answering decides at once: an early 'fallback' (the panel's
+            self._decide("native")        # xapp applet still loading at login) or 'no-support' may still turn native
 
     def _decide(self, xapp_state):
         if self.kind is not None:  # the signal and the timer both end here; the first one wins
@@ -2100,7 +2116,8 @@ class Tray:
         if self._timer:
             GLib.source_remove(self._timer)
             self._timer = 0
-        kind = tray_choice(xapp_state, self.icon is not None, Ayatana is not None, os.environ.get("DEBRID_APPLET_TRAY", ""))
+        usable = Ayatana is not None and has_bus_name(SNI_WATCHER)  # the library alone draws nothing without a host
+        kind = tray_choice(xapp_state, self.icon is not None, usable, self._forced)
         if kind not in ("xapp", "xapp-fallback") and self.icon is not None:
             self.icon.set_visible(False)
             self.icon = None
@@ -2172,7 +2189,7 @@ class App:
             show_item = show_item or item
         menu.show_all()
         self._hide_hint_shown = False  # tray-less mode: the first hide of the session explains how to come back
-        self.tray = Tray(self, menu, show_item, self._on_tray_decided)
+        self.tray = Tray(menu, show_item, self.toggle_window, self._on_tray_decided)
         self.watcher = WatchFolder(self)
         self.feeds = FeedWatcher(self)
         self.api = None

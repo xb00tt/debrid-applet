@@ -1601,6 +1601,82 @@ def test_tray_choice_and_wayland():
     assert debrid_applet.is_wayland("GdkWaylandDisplay") and not debrid_applet.is_wayland("X11Display")
 
 
+def test_tray_helpers():
+    import debrid_applet as da
+    assert da.has_bus_name("surely.nobody.owns.this.name") is False  # with or without a session bus
+    if os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
+        assert da.has_bus_name("org.freedesktop.DBus") is True
+    assert da.try_xapp("") and da.try_xapp("xapp") and da.try_xapp("xap")  # a typo falls through to the normal chain
+    assert not da.try_xapp("ayatana") and not da.try_xapp("none")
+
+
+def test_tray_adapter_policy():
+    """The adapter around tray_choice: XApp is tried unless the knob says otherwise, only 'native' decides before the
+    timer, and Ayatana counts only while a StatusNotifier host owns the bus name. Stubs stand in for XApp (a display
+    is needed for the real one); Ayatana is a sentinel that must never be touched."""
+    import debrid_applet as da
+
+    class State:
+        def __init__(self, nick):
+            self.value_nick = nick
+
+    class FakeIcon:  # the XApp.StatusIcon surface Tray touches
+        def __init__(self):
+            self.visible, self.label = True, None
+
+        def set_name(self, *_): pass
+        def set_icon_name(self, *_): pass
+        def set_tooltip_text(self, *_): pass
+        def set_secondary_menu(self, *_): pass
+        def connect(self, *_): pass
+        def set_label(self, text): self.label = text
+        def set_visible(self, flag): self.visible = flag
+        def get_state(self): return State("fallback")
+
+    class FakeXApp:
+        StatusIcon = FakeIcon
+
+    saved = da.XApp, da.Ayatana, da.has_bus_name, os.environ.get("DEBRID_APPLET_TRAY")
+    decided = []
+    try:
+        da.XApp, da.Ayatana, da.has_bus_name = FakeXApp, None, lambda name: False
+        os.environ["DEBRID_APPLET_TRAY"] = "xap"  # a typo must not switch XApp off
+        tray = da.Tray(None, None, lambda *_: None, decided.append)
+        assert tray.icon is not None and tray.kind is None
+        tray._on_state(None, State("fallback"))  # the panel may still be loading at login: the timer decides, not this
+        assert tray.kind is None and decided == []
+        tray._on_state(None, State("native"))
+        assert tray.kind == "xapp" and decided == ["xapp"] and tray.present()
+        tray.set_count(3, 8)
+        assert tray.icon.label == "3↓"
+
+        os.environ["DEBRID_APPLET_TRAY"] = "ayatana"
+        da.Ayatana = object()  # importable, but nobody owns org.kde.StatusNotifierWatcher: unusable
+        tray = da.Tray(None, None, lambda *_: None, decided.append)
+        assert tray.icon is None
+        tray._decide(None)
+        assert tray.kind == "none" and not tray.present()
+
+        os.environ["DEBRID_APPLET_TRAY"] = ""
+        tray = da.Tray(None, None, lambda *_: None, decided.append)
+        tray._decide("fallback")  # timer: XApp on XEmbed, no host anywhere: keep that icon, but the window must show
+        assert tray.kind == "xapp-fallback" and not tray.present() and tray.icon is not None
+
+        da.has_bus_name = lambda name: name == da.SNI_WATCHER  # a host appears: Ayatana wins over XEmbed
+        tray = da.Tray(None, None, lambda *_: None, decided.append)
+        try:
+            tray._decide("fallback")
+        except AttributeError:  # the sentinel has no Indicator: reaching it is the proof the branch was taken
+            pass
+        assert tray.icon is None  # the XApp icon was dropped before Ayatana was built
+    finally:
+        da.XApp, da.Ayatana, da.has_bus_name = saved[:3]
+        if saved[3] is None:
+            os.environ.pop("DEBRID_APPLET_TRAY", None)
+        else:
+            os.environ["DEBRID_APPLET_TRAY"] = saved[3]
+
+
 if __name__ == "__main__":
     import sys
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]

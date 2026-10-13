@@ -58,8 +58,12 @@ Backend selection:
 1. `XApp` importable: build the `XApp.StatusIcon` exactly as today, connect `state-changed`, and arm a one-shot 2 s
    timer. The first of these decides:
    - `state-changed` → `NATIVE`: keep it, `kind = "xapp"`, cancel the timer.
-   - `state-changed` → `FALLBACK` / `NO_SUPPORT`, or the timer fires without `NATIVE`: go to step 2.
-2. `AyatanaAppIndicator3` importable: hide the XApp icon (`set_visible(False)`, drop the reference), then
+   - the timer fires without `NATIVE`: go to step 2 with the state XApp reports then. An early `FALLBACK` does not
+     decide: at login the panel's xapp applet may still be loading, and XApp turns `NATIVE` by itself once it appears
+     (1.0.9 relied on that); deciding on it would trade the left-click toggle for the indicator for the whole session.
+2. `AyatanaAppIndicator3` importable **and** `org.kde.StatusNotifierWatcher` owned on the session bus (KDE, GNOME's
+   AppIndicator extension, XFCE's status tray, xapp-sn-watcher; without a host the library draws nothing, so it must
+   not count): hide the XApp icon (`set_visible(False)`, drop the reference), then
    `Indicator.new(APP_ID, APP_ID, IndicatorCategory.APPLICATION_STATUS)`, `set_icon_theme_path(HERE)` (the SVG next to
    the code is named `debrid-applet.svg`, so the icon name resolves both from source and from the installed theme),
    `set_status(ACTIVE)`, `set_menu(menu)`, `set_secondary_activate_target(show_item)` (middle click toggles the window),
