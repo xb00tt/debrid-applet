@@ -1480,6 +1480,33 @@ def test_update_download_verifies_digest():
     srv.shutdown()
 
 
+def test_deb_package():
+    """packaging/build-deb.sh: the launcher imports the module with the working directory off the path (so the bytecode
+    the postinst compiles is used and a stray module there cannot shadow ours), postinst compiles, prerm cleans up."""
+    import shutil
+    import subprocess
+    import tempfile
+    import debrid_applet as da
+    import debrid_update as du
+    env = {**os.environ, "DEBRID_APPLET_CONFIG_DIR": "/tmp/debrid-test-config", "DEBRID_APPLET_DATA_DIR": "/tmp/debrid-test-data"}
+    cmd = ["python3", "-P", "-c", 'import sys; sys.path.insert(0, "."); import debrid_applet; debrid_applet.main()', "--version"]
+    assert subprocess.run(cmd, capture_output=True, text=True, env=env).stdout.strip() == f"debrid-applet {da.VERSION}"  # the launcher's form of main()
+    if not shutil.which("dpkg-deb"):
+        print("  (no dpkg-deb: package contents not checked)")
+        return
+    deb = subprocess.run(["sh", "packaging/build-deb.sh"], capture_output=True, text=True, check=True).stdout.strip()
+    assert deb.endswith(f"/dist/debrid-applet_{da.VERSION}_all.deb") and os.path.exists(deb)
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(["dpkg-deb", "-R", deb, tmp], check=True, capture_output=True)
+        launcher = open(os.path.join(tmp, "usr/bin/debrid-applet")).read()
+        assert "exec python3 -P -c 'import sys; sys.path.insert(0, \"/usr/share/debrid-applet\"); import debrid_applet; debrid_applet.main()' \"$@\"" in launcher
+        postinst = open(os.path.join(tmp, "DEBIAN/postinst")).read()
+        assert "python3 -m compileall -q /usr/share/debrid-applet" in postinst and postinst.startswith("#!/bin/sh")
+        assert "rm -rf /usr/share/debrid-applet/__pycache__" in open(os.path.join(tmp, "DEBIAN/prerm")).read()
+        assert all(os.access(os.path.join(tmp, "DEBIAN", s), os.X_OK) for s in ("postinst", "prerm"))
+        assert sorted(os.listdir(os.path.join(tmp, "usr/share/debrid-applet"))) == sorted(du.FILES)
+
+
 def test_update_install_user_from_tarball():
     import io, os, shutil, stat, tarfile
     import debrid_update as du

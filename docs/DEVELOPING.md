@@ -32,7 +32,9 @@ mangles `[` and `|` on some keyboard layouts, so use the clipboard or bracket-fr
 - `DEBRID_APPLET_CONFIG_DIR` and `DEBRID_APPLET_DATA_DIR` redirect both. The test suite sets them before importing
   `debrid_applet`; **any script or harness that imports the module must do the same**: a `ServiceTab` built on a
   stand-in app saves the real config as soon as its state filter changes (this once wiped a live set of keys).
-- Per-user install: `~/.local/share/debrid-applet/`; package install: `/usr/share/debrid-applet/`.
+- Per-user install: `~/.local/share/debrid-applet/`; package install: `/usr/share/debrid-applet/`, where the package's
+  `postinst` compiles the bytecode into `__pycache__` (the launcher imports the module rather than running the file, so
+  starts skip the compile) and `prerm` removes it.
 
 ## Releases
 

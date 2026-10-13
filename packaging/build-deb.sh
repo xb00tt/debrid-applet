@@ -12,8 +12,26 @@ mkdir -p "$APP" "$STAGE/usr/bin" "$STAGE/usr/share/applications" "$STAGE/etc/xdg
 cp "$SRC/debrid_api.py" "$SRC/debrid_local_api.py" "$SRC/debrid_update.py" "$SRC/debrid_applet.py" "$SRC/debrid-applet.svg" "$APP/"
 cp "$SRC/debrid-applet.svg" "$STAGE/usr/share/icons/hicolor/scalable/apps/"
 cp "$SRC/README.md" "$SRC/LICENSE" "$STAGE/usr/share/doc/$PKG/"
-printf '#!/bin/sh\nexec python3 /usr/share/%s/debrid_applet.py "$@"\n' "$PKG" > "$STAGE/usr/bin/$PKG"
+cat > "$STAGE/usr/bin/$PKG" <<LAUNCHER
+#!/bin/sh
+# Imports the module instead of running the file: a script named on the command line is never bytecode-cached, an
+# imported module is, and postinst compiles the cache once (the directory is root-owned, so Python could not write it
+# at run time). -P keeps the working directory off the import path, as running the file did.
+exec python3 -P -c 'import sys; sys.path.insert(0, "/usr/share/$PKG"); import debrid_applet; debrid_applet.main()' "\$@"
+LAUNCHER
 chmod 755 "$STAGE/usr/bin/$PKG"
+cat > "$STAGE/DEBIAN/postinst" <<POSTINST
+#!/bin/sh
+# Bytecode next to the sources: one compile per install instead of one per start. After a Python upgrade the cache is
+# stale until the package is reinstalled; Python then compiles at start, as before, and nothing breaks.
+set -e
+python3 -m compileall -q /usr/share/$PKG
+POSTINST
+cat > "$STAGE/DEBIAN/prerm" <<PRERM
+#!/bin/sh
+rm -rf /usr/share/$PKG/__pycache__
+PRERM
+chmod 755 "$STAGE/DEBIAN/postinst" "$STAGE/DEBIAN/prerm"
 sed "s|@EXEC@|$PKG|" "$SRC/debrid-applet.desktop" > "$STAGE/usr/share/applications/$PKG.desktop"
 cp "$STAGE/usr/share/applications/$PKG.desktop" "$STAGE/etc/xdg/autostart/$PKG.desktop"
 cat > "$STAGE/DEBIAN/control" <<CONTROL

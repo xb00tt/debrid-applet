@@ -2044,7 +2044,7 @@ class App:
         except OSError:
             pass
         self._polling = False  # a poll is in flight; refresh() then only asks for another one afterwards
-        self.restart_requested = False  # set by restart(); main() re-execs this file after the main loop ends
+        self.restart_requested = False  # set by restart(); main() re-execs the launcher or this file after the main loop ends
         self._updating = ""  # version an update_to() is working on, until it finishes or fails
         self._installed = ""  # version installed in this session but not yet running (the user chose "Not now")
         self._again = None  # "light" / "full": a refresh asked for while a poll was running
@@ -2454,7 +2454,7 @@ class App:
         run_async(fetch, after_download)
 
     def restart(self):
-        """Quit and let main() exec this file again: same PID, the bus name is freed by the exec, so the new
+        """Quit and let main() exec the program again: same PID, the bus name is freed by the exec, so the new
         process becomes the primary instance instead of being forwarded to a dying one."""
         self.hide_window()
         self.restart_requested = True
@@ -2873,6 +2873,9 @@ def main():
     gapp.connect("command-line", on_cmdline)
     gapp.run(sys.argv)
     if "app" in state and state["app"].restart_requested:  # an update was installed: become the new version
+        launcher = f"/usr/bin/{APP_ID}"  # the package's launcher imports this file, so its compiled bytecode is used
+        if install_mode(HERE) == "deb" and os.access(launcher, os.X_OK):
+            os.execv(launcher, [launcher])
         os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
 
 
