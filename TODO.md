@@ -7,7 +7,8 @@ Open notes:
 
 - Keyring storage for API keys was removed after it lost keys twice on this machine; if it comes back it needs a cross-restart verification step before the file copy is dropped.
 - Another service (Premiumize etc.): recipe in the README's Dev section; only with an account to test against.
-- AllDebrid hoster-link unlock: request path verified live; a successful unlock of a real hoster link hasn't been observed yet.
+- AllDebrid hoster-link unlock: observed 2026-10-13 through the applet (`--service AllDebrid --add …`): a 1fichier and a
+  mega link both unlocked, "Added 2, direct link(s) copied". Closed.
 - Torbox auth codes, closed 2026-10-13 against api-docs.torbox.app (errors table): `NO_AUTH` "no provided credentials"
   and `BAD_TOKEN` "token invalid" are the key verdicts (`TORBOX_AUTH_ERRORS`); a code ending in `ERROR` is the server's
   fault by Torbox's own rule, so `AUTH_ERROR` ("error verifying the given authentication", the outage case) shows as
