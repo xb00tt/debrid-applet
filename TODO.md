@@ -8,11 +8,10 @@ Open notes:
 - Keyring storage for API keys was removed after it lost keys twice on this machine; if it comes back it needs a cross-restart verification step before the file copy is dropped.
 - Another service (Premiumize etc.): recipe in the README's Dev section; only with an account to test against.
 - AllDebrid hoster-link unlock: request path verified live; a successful unlock of a real hoster link hasn't been observed yet.
-- One `Invalid API key` answer opens Settings (`ServiceTab.say` → `App.open_settings_once`). Observed 2026-10-13: Torbox
-  returned it once in the middle of an outage (timeouts and "error processing your request" for twenty minutes before),
-  with a valid key, so the dialog popped up for nothing. Fix: open Settings only after two consecutive auth errors
-  from the same service, or after a confirming `account()` call fails the same way; a lone one stays a status-line
-  error. Torbox's `AUTH_ERROR` code (`debrid_api.TORBOX_AUTH_ERRORS`) is the suspect.
+- Auth errors during outages (v1.2.1): spec in `docs/superpowers/specs/2026-10-13-auth-error-design.md`. Observed
+  2026-10-13: one `Invalid API key` from Torbox mid-outage opened Settings with a valid key. Fix: evidence in the message,
+  a 403 without JSON is a plain HTTP error, and a second `account()` call confirms before Settings opens. Torbox's auth
+  codes are undocumented (`AUTH_ERROR` semantics unknown); revisit `TORBOX_AUTH_ERRORS` when a logged incident shows one.
 
 Roadmap (decided 2026-10-13, from the "full-fledged Linux app" discussion; goal is reach for other users, kept light):
 
