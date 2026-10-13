@@ -1677,6 +1677,36 @@ def test_tray_adapter_policy():
             os.environ["DEBRID_APPLET_TRAY"] = saved[3]
 
 
+METAINFO = "io.github.xb00tt.DebridApplet.metainfo.xml"
+
+
+def test_metainfo():
+    """The AppStream file stays consistent with VERSION, the desktop file and the icon (see the 2026-10-13 app-id spec)."""
+    import datetime
+    import re
+    import xml.etree.ElementTree as ET
+    import debrid_applet as da
+    root = ET.parse(METAINFO).getroot()
+    assert root.tag == "component" and root.get("type") == "desktop-application"
+    assert root.findtext("id") == da.DBUS_ID and METAINFO == da.DBUS_ID + ".metainfo.xml"
+    launchable = root.find("launchable")
+    assert launchable.get("type") == "desktop-id" and launchable.text == "debrid-applet.desktop"
+    desktop = open("debrid-applet.desktop").read()
+    assert f"\nIcon={da.APP_ID}\n" in desktop and os.path.exists(da.APP_ID + ".svg")
+    assert root.findtext("metadata_license") and root.findtext("project_license") == "MIT"
+    assert root.find("developer").get("id") and root.find("developer").findtext("name")
+    assert root.find("content_rating").get("type") == "oars-1.1"
+    releases = root.findall("releases/release")
+    assert releases and releases[0].get("version") == da.VERSION
+    today = datetime.date.today().isoformat()
+    versions = [tuple(int(p) for p in r.get("version").split(".")) for r in releases]
+    assert all(r.get("date") <= today for r in releases), "a release is dated in the future"
+    assert versions == sorted(versions, reverse=True) and len(set(versions)) == len(versions), "releases must be newest first"
+    image = root.findtext("screenshots/screenshot/image")
+    assert image.startswith("https://") and f"/v{da.VERSION}/" in image, image
+    assert not re.search(r"<developer_name>", open(METAINFO).read())  # deprecated since AppStream 1.0
+
+
 if __name__ == "__main__":
     import sys
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]

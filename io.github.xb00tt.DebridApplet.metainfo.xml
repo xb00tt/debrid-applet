@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.xb00tt.DebridApplet</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Debrid Applet</name>
+  <summary>Torbox, Real-Debrid and AllDebrid in one tray window</summary>
+  <description>
+    <p>Shows account status and every torrent with live progress, adds magnets, .torrent files and hoster links,
+       streams or downloads the results, and automates the rest: watch folder, RSS feeds, auto-download, local API.</p>
+    <p>Tray icon on Cinnamon, KDE, XFCE, MATE and GNOME (with the AppIndicator extension); works as a plain window
+       elsewhere.</p>
+  </description>
+  <launchable type="desktop-id">debrid-applet.desktop</launchable>
+  <developer id="io.github.xb00tt"><name>xb00tt</name></developer>
+  <url type="homepage">https://github.com/xb00tt/debrid-applet</url>
+  <url type="bugtracker">https://github.com/xb00tt/debrid-applet/issues</url>
+  <url type="vcs-browser">https://github.com/xb00tt/debrid-applet</url>
+  <provides><binary>debrid-applet</binary></provides>
+  <content_rating type="oars-1.1"/>
+  <screenshots>
+    <screenshot type="default">
+      <caption>The All tab with items from every service</caption>
+      <image>https://raw.githubusercontent.com/xb00tt/debrid-applet/v1.1.0/docs/screenshot.png</image>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="1.1.0" date="2026-10-13"><description><p>Runs on any Debian-based desktop: tray icon on Cinnamon, KDE, XFCE, MATE and GNOME, plain window elsewhere.</p></description></release>
+    <release version="1.0.0" date="2026-10-11"><description><p>First release.</p></description></release>
+  </releases>
+</component>
