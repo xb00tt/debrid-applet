@@ -47,7 +47,8 @@ To release: bump `VERSION` in `debrid_applet.py` and the deb file name in the RE
 first, the tag's date, one line) to `io.github.xb00tt.debrid_applet.metainfo.xml` and point its screenshot URL at the
 new tag, then tag `vX.Y.Z` and push the tag. `python3 test_debrid_api.py` checks the file against `VERSION`;
 `appstreamcli validate --no-net --pedantic io.github.xb00tt.debrid_applet.metainfo.xml` is the local lint. The release
-workflow runs the tests, refuses a tag that doesn't match `VERSION` or has no release entry, builds the `.deb` (via
+workflow runs the tests (so a metainfo whose newest release is not `VERSION` fails there), refuses a tag that doesn't
+match `VERSION`, builds the `.deb` (via
 `packaging/build-deb.sh`) and a source tarball, and publishes a GitHub release with generated notes.
 `packaging/build-deb.sh` also works locally on any Debian-based box.
 

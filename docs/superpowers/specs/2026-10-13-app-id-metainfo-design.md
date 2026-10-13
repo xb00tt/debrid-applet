@@ -16,7 +16,10 @@ its name.
 converting underscores to dashes (its example: `io.github.example_foo.bar` → `github.com/example-foo/bar`), and the
 URL must resolve; `DebridApplet` would have needed a manual exception. The D-Bus name, the metainfo id and file name
 and the future Flatpak id all follow. Changed in 1.1.2 before any store listing existed, so no `<provides><id>`
-compatibility entry is needed.
+compatibility entry is needed. The release workflow's `grep` for a `<release>` entry (§3) was dropped in 1.1.2: the
+test suite runs first in that workflow and `test_metainfo` already requires the newest release to equal `VERSION`.
+The summary was shortened to 34 characters and the screenshot scaled to 1000 pixels wide for Flathub's quality
+guidelines, both now asserted by the test.
 
 Two ways to get there were weighed.
 
