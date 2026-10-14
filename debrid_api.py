@@ -115,6 +115,8 @@ class _Client:
             raise ApiError("Rate limited, retrying next tick")
         if r.status_code == 404:
             raise NotFound(_error_message(r))
+        if r.status_code == 451:  # Real-Debrid's answer to a blocked hash: {"error": "infringing_file", "error_code": 35}
+            raise ApiError(f"Refused for legal reasons ({_error_message(r)})")
         if r.status_code >= 400:
             raise ApiError(_error_message(r))
         return r
@@ -234,7 +236,7 @@ class RealDebrid(_Client):
                             self._select_all(t["id"])
                         except ApiError as e:
                             err = str(e)
-                            if err in RD_PERMANENT_SELECT_ERRORS:
+                            if any(code in err for code in RD_PERMANENT_SELECT_ERRORS):
                                 self._select_failed[t["id"]] = err
                     if err:
                         state = f"{ERROR}: select failed: {err}"

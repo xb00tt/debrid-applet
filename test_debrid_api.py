@@ -366,6 +366,21 @@ def test_http_error_message():
         assert str(e).startswith("HTTP 503")
 
 
+def test_http_451_is_readable():
+    import debrid_applet as da
+    try:
+        RealDebrid("t", FakeSession(FakeResp(451, {"error": "infringing_file", "error_code": 35}))).add_magnet("magnet:?x")
+        assert False
+    except ApiError as e:  # observed 2026-10-15: Real-Debrid's answer to a blocked hash
+        assert str(e) == "Refused for legal reasons (infringing_file)" and not da.retryable(str(e))
+    item = [{"id": "B", "filename": "b.iso", "status": "waiting_files_selection"}]
+    s = FakeSession(FakeResp(200, item), FakeResp(451, {"error": "infringing_file", "error_code": 35}), FakeResp(200, item))
+    rd = RealDebrid("t", s)
+    rd.torrents()
+    assert rd.torrents()[0]["state"] == "Error: select failed: Refused for legal reasons (infringing_file)"
+    assert len(s.calls) == 3  # still permanent: no second selectFiles
+
+
 def test_http_error_uses_api_detail():
     tb = FakeSession(FakeResp(400, {"success": False, "error": "BOZO_TORRENT", "detail": "Torrent file is not valid.", "data": None}))
     try:
@@ -1078,7 +1093,6 @@ def test_merged_client():
             self.calls = []
         def delete(self, tid, kind="torrent"): self.calls.append(("delete", tid, kind))
         def links(self, tid, kind="torrent"): return [{"name": f"{self.name}-{tid}", "url": "u", "size": 1}]
-        def add_magnet(self, m): self.calls.append(("magnet", m))
     tb = Tab("Torbox", [{"id": "7", "name": "x", "done": False, "hash": "h", "kind": "torrent"}])
     rd = Tab("Real-Debrid", [{"id": "A", "name": "y", "done": True, "hash": "", "kind": "torrent"}])
     m = da.MergedClient(lambda: [tb, rd])
@@ -1092,8 +1106,20 @@ def test_merged_client():
     assert [r["id"] for r in m.torrents(active_only=True)] == ["Torbox|7"]
     m.delete("Real-Debrid|A", "torrent"); assert rd.calls == [("delete", "A", "torrent")]
     assert m.links("Torbox|7", "torrent") == [{"name": "Torbox-7", "url": "u", "size": 1}]
-    m.add_magnet("magnet:?x"); assert tb.calls == [("magnet", "magnet:?x")]  # first configured service
     assert m.account()["plan"] == "all services" and m.name == "All"
+
+
+def test_all_tab_adds_to_every_service():
+    import types
+    import debrid_applet as da
+    got, said = [], []
+    tabs = [types.SimpleNamespace(name=n, add_items=lambda items, after=None, n=n: got.append((n, items, after)))
+            for n in ("Torbox", "Real-Debrid", "AllDebrid")]
+    merged = types.SimpleNamespace(is_merged=True, client=types.SimpleNamespace(_real=lambda: tabs),
+                                   say=lambda msg, error=False: said.append(msg))
+    da.ServiceTab.add_items(merged, ["magnet:?x"])
+    assert got == [(n, ["magnet:?x"], None) for n in ("Torbox", "Real-Debrid", "AllDebrid")]
+    assert said == ["Adding to Torbox, Real-Debrid, AllDebrid"]
 
 
 def test_retryable():

@@ -517,21 +517,6 @@ class MergedClient:
         client, real_id = self._route(tid)
         return client.links(real_id, kind)
 
-    def _first(self):
-        tabs = self._real()
-        if not tabs:
-            raise ApiError("No service configured")
-        return tabs[0].client
-
-    def add_magnet(self, magnet):
-        self._first().add_magnet(magnet)
-
-    def add_torrent_file(self, path):
-        self._first().add_torrent_file(path)
-
-    def add_link(self, url):
-        return self._first().add_link(url)
-
 
 def download_command(urls, dest, tool, via_stdin=False):
     """argv for a resumable bulk download into dest with aria2c (one file per URL, 8 connections each) or wget;
@@ -1718,7 +1703,7 @@ class ServiceTab(Gtk.Box):
         torbox = self.app.tab_named("Torbox")
         route = Gtk.CheckButton(label="Send magnets Torbox already has cached to Torbox instead",
                                 active=bool(self.app.cfg.get("route_cached")))
-        route.set_sensitive(bool(torbox and torbox.client) and torbox is not self)
+        route.set_sensitive(bool(torbox and torbox.client) and torbox is not self and not self.is_merged)
         view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, left_margin=8, right_margin=8,
                             top_margin=6, bottom_margin=6)
         buf = view.get_buffer()
@@ -1809,8 +1794,15 @@ class ServiceTab(Gtk.Box):
     def add_items(self, items, after=None, attempt=1):
         """Add magnets, links and .torrent paths sequentially in one worker; report counts in the status line.
         after(added_labels, errors) runs on the main loop when done. Rate-limit and network failures are retried
-        every 60 s, three times."""
+        every 60 s, three times. The All tab hands the items to every configured service, each reporting its own
+        result (after runs once per service)."""
         if not items or self.client is None:
+            return
+        if self.is_merged:
+            tabs = self.client._real()
+            self.say("Adding to " + ", ".join(t.name for t in tabs))
+            for tab in tabs:
+                tab.add_items(items, after)
             return
         retry = []
 

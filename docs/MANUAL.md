@@ -130,8 +130,9 @@ Tick rows with the checkboxes (shift-click ticks a range, header checkbox ticks 
 ### Visibility
 
 - **All tab.** With more than one service configured, the first tab lists everything together with a colored
-  **Service** column; Files, Play, Copy, Delete and friends act on the owning service. Adds from that tab go to the
-  first configured service. Settings → Behaviour picks which tab the window opens on (All by default).
+  **Service** column; Files, Play, Copy, Delete and friends act on the owning service. Adds from that tab (and **Add to
+  All** on the clipboard notification) go to every configured service, each service's tab reporting its own result.
+  Settings → Behaviour picks which tab the window opens on (All by default).
 - **Expiry warning.** One notification per service when premium ends within 7 days.
 - **Activity log.** Clock icon in the toolbar (or `Ctrl+L`): status messages and notifications with a timestamp,
   newest last, with Refresh / Open file / Clear. Kept in `~/.local/share/debrid-applet/activity.log`. Settings choose
