@@ -11,7 +11,7 @@ feeds for you.
 Download the `.deb` from the [latest release](https://github.com/xb00tt/debrid-applet/releases) and install it:
 
 ```bash
-sudo apt install ./debrid-applet_1.2.2_all.deb
+sudo apt install ./debrid-applet_1.2.3_all.deb
 ```
 
 It starts with your session from now on. To start it right away, look for **Debrid Applet** in the menu.

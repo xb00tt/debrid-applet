@@ -21,10 +21,11 @@
   <screenshots>
     <screenshot type="default">
       <caption>The All tab with items from every service</caption>
-      <image>https://raw.githubusercontent.com/xb00tt/debrid-applet/v1.2.2/docs/screenshot.png</image>
+      <image>https://raw.githubusercontent.com/xb00tt/debrid-applet/v1.2.3/docs/screenshot.png</image>
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.2.3" date="2026-10-15"><description><p>Add to All (the All tab and the clipboard notification) adds to every configured service, each tab reporting its own result; a torrent a service refuses for legal reasons (Real-Debrid HTTP 451) says so.</p></description></release>
     <release version="1.2.2" date="2026-10-13"><description><p>Torbox server-side auth errors (AUTH_ERROR) no longer count as a bad key; only NO_AUTH and BAD_TOKEN do, per Torbox's API docs. Service API references in the developer notes; openSUSE dependency line.</p></description></release>
     <release version="1.2.1" date="2026-10-13"><description><p>Settings opens only after a service rejects the key twice; invalid-key errors name the status and code; a 403 without JSON is a plain error.</p></description></release>
     <release version="1.2.0" date="2026-10-13"><description><p>Flatpak build for Flathub: players and downloads run on the host or fall back to the browser and the built-in wget; app id io.github.xb00tt.debrid-applet (restart a running 1.1.x applet after upgrading, or a second instance can start).</p></description></release>
